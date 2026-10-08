@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "baby-feed-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "HOUSEHOLDS", "class_name": "HouseholdDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HouseholdDO"] }],
+  "vars": {
+    // Browser origins allowed for CORS (comma-separated; "*" = any).
+    // GitHub Pages prod + Vite dev (5173) + Vite preview (4173).
+    "ALLOWED_ORIGINS": "https://samjreij94.github.io,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
+  },
+  "observability": { "enabled": true }
+}

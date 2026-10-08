@@ -11,7 +11,7 @@ const MIN = 60_000;
 
 function mkCore(start = new Date(2026, 9, 8, 12, 0).getTime()) {
   let t = start;
-  const core = new FeedCore({ clock: () => t, deviceId: 'dev-a', appUrl: 'https://samjreij94.github.io/baby-feed/' });
+  const core = new FeedCore({ clock: () => t, deviceId: 'dev-a', appUrl: 'https://samjreij94.github.io/baby-feed/', storage: 'memory', mirror: false, autoSync: false });
   return { core, advance: (ms: number) => (t += ms), now: () => t };
 }
 

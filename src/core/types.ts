@@ -33,6 +33,10 @@ export interface EntryBase {
   loggedBy: MemberRef;
   /** Device that wrote this version (LWW tie-break). Random UUID per install. */
   deviceId: string;
+  /** Where the entry came from. Absent = 'app'. */
+  source?: 'app' | 'nara';
+  /** Id in the source system (e.g. Nara's _activityKey), ≤128 chars. */
+  externalId?: string;
 }
 
 /** One continuous stretch on one side. endedAt null = currently open (the feed is running on this side). */
@@ -185,6 +189,17 @@ export type BreastPatch = Partial<Pick<BreastFeed, 'startedAt' | 'endedAt' | 'se
 export type BottlePatch = Partial<Pick<BottleFeed, 'at' | 'amountOz' | 'milk' | 'note'>>;
 export type EntryPatch = BreastPatch | BottlePatch;
 
+/** Result of FeedCore.importEntries. */
+export interface ImportResult {
+  added: number;
+  /** Id already exists locally (never overwritten, so a local edit wins). */
+  skippedExisting: number;
+  /** Id exists locally as a tombstone (never resurrected). */
+  skippedDeleted: number;
+  /** Failed validation (additive field). */
+  invalid: number;
+}
+
 export type FeedRange = { days: number } | { from: EpochMs; to?: EpochMs };
 
 // ── Household / sync ─────────────────────────────────────
@@ -234,11 +249,14 @@ export interface CreateHouseholdResponse {
   secret: string;
 }
 
+/** Join sends the secret as `Authorization: Bearer <secret>`; a JSON body {secret} is also accepted. */
 export interface JoinHouseholdRequest {
   secret: string;
 }
 export interface JoinHouseholdResponse {
   householdId: string;
+  /** Current (non-deleted) members of the household. */
+  members: Member[];
 }
 
 export interface SyncRequest {
@@ -263,3 +281,4 @@ export interface SyncResponse {
 export interface ApiError {
   error: string;
 }
+

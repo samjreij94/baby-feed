@@ -1,9 +1,9 @@
 /** React bindings. Wrap the app in <CoreProvider core={getCore()}> (optional: hooks default to getCore()). */
-import { createContext, createElement, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, createElement, useCallback, useRef, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { activeFeedView, feedStart, lastFeedInfo } from './feed';
 import { computeMetrics } from './metrics';
 import { getCore, type CoreSnapshot, type FeedCore } from './store';
-import type { ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, Side, SyncView } from './types';
+import type { ImportResult, Member, ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, Side, SyncView } from './types';
 
 const Ctx = createContext<FeedCore | null>(null);
 
@@ -119,7 +119,96 @@ export function useFeedActions() {
       addManualBreast: core.addManualBreast.bind(core),
       editEntry: core.editEntry.bind(core),
       deleteEntry: core.deleteEntry.bind(core),
+      importEntries: core.importEntries.bind(core),
     }),
     [core],
   );
+}
+
+/** false until persisted data has loaded from IndexedDB (identity + running timer are available earlier via the mirror). */
+export function useCoreReady(): boolean {
+  return useSnapshot().ready;
+}
+
+// ── Nara import ──────────────────────────────────────────
+
+type NaraModule = typeof import('./import/nara');
+type NaraParsed = Awaited<ReturnType<NaraModule['parseNaraCsv']>>;
+export type NaraImportPreview = NaraParsed['preview'];
+export type NaraImportStatus = 'idle' | 'parsing' | 'ready' | 'importing' | 'done' | 'error';
+
+export interface NaraImportHook {
+  status: NaraImportStatus;
+  /** From parseNaraCsv (counts, date range, caregivers found, …) once status is 'ready'. */
+  preview: NaraImportPreview | null;
+  error: string | null;
+  result: ImportResult | null;
+  /** Read + parse a Nara Baby CSV export (module loaded lazily). */
+  parseFile(file: File): Promise<void>;
+  /** Import the parsed entries; caregiverMap (Nara caregiver name → Member) re-parses with that mapping first. */
+  confirm(caregiverMap?: Record<string, Member>): Promise<void>;
+  reset(): void;
+}
+
+/** Nara Baby CSV import flow: parseFile → (preview) → confirm → result. Never touches existing local entries. */
+export function useNaraImport(): NaraImportHook {
+  const core = useCore();
+  const [state, setState] = useState<{ status: NaraImportStatus; preview: NaraImportPreview | null; error: string | null; result: ImportResult | null }>({
+    status: 'idle',
+    preview: null,
+    error: null,
+    result: null,
+  });
+  const parsed = useRef<{ text: string; entries: NaraParsed['entries'] } | null>(null);
+
+  const parse = useCallback(
+    async (text: string, caregiverMap?: Record<string, Member>) => {
+      const { parseNaraCsv } = await import('./import/nara');
+      const s = core.getSnapshot();
+      return parseNaraCsv(text, { me: s.me, members: s.members, caregiverMap, deviceId: core.deviceId, householdId: s.householdId });
+    },
+    [core],
+  );
+
+  const fail = (e: unknown) => setState((st) => ({ ...st, status: 'error', error: e instanceof Error ? e.message : String(e) }));
+
+  const parseFile = useCallback(
+    async (file: File) => {
+      setState({ status: 'parsing', preview: null, error: null, result: null });
+      try {
+        await core.ready;
+        const text = await file.text();
+        const r = await parse(text);
+        parsed.current = { text, entries: r.entries };
+        setState({ status: 'ready', preview: r.preview, error: null, result: null });
+      } catch (e) {
+        parsed.current = null;
+        fail(e);
+      }
+    },
+    [core, parse],
+  );
+
+  const confirm = useCallback(
+    async (caregiverMap?: Record<string, Member>) => {
+      const p = parsed.current;
+      if (!p) return fail(new Error('Nothing to import — choose a file first'));
+      setState((st) => ({ ...st, status: 'importing', error: null }));
+      try {
+        const entries = caregiverMap ? (await parse(p.text, caregiverMap)).entries : p.entries;
+        const result = await core.importEntries(entries);
+        setState((st) => ({ ...st, status: 'done', result }));
+      } catch (e) {
+        fail(e);
+      }
+    },
+    [core, parse],
+  );
+
+  const reset = useCallback(() => {
+    parsed.current = null;
+    setState({ status: 'idle', preview: null, error: null, result: null });
+  }, []);
+
+  return { ...state, parseFile, confirm, reset };
 }

@@ -51,6 +51,7 @@ export function parseInvite(codeOrLink: string): string | null {
 }
 
 /** Invite code from location.hash (on app open via an invite link), else null. */
-export function readInviteFromLocation(loc: Pick<Location, 'hash'> = location): string | null {
-  return loc.hash.includes('join=') ? parseInvite(loc.hash) : null;
+export function readInviteFromLocation(loc?: { hash: string }): string | null {
+  const hash = (loc ?? (globalThis as { location?: { hash: string } }).location)?.hash ?? '';
+  return hash.includes('join=') ? parseInvite(hash) : null;
 }

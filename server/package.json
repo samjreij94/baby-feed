@@ -1,0 +1,25 @@
+{
+  "name": "baby-feed-sync",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Baby Feed sync server (Cloudflare Worker + one Durable Object per household)",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke": "npm --prefix .. exec -- vite-node server/scripts/smoke.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260927.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "~5.9",
+    "vitest": "^2.1.9",
+    "wrangler": "^4.142.0",
+    "ws": "^8.22.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

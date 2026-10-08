@@ -4,8 +4,15 @@ Feedings-only tracker (breast + bottle) shared by two parents' iPhones. Local-fi
 and syncs through a tiny Cloudflare Worker. **Normative types: `src/core/types.ts`. Public API: `src/core/index.ts`.**
 The UI imports only from `src/core`.
 
-Status: phase 1 = contract + in-memory core (timer, feeds, derived info, metrics work; hooks are final).
-Phase 2 = IndexedDB persistence, outbox, sync client, server. Names and shapes below do not change.
+Status: phase 2 — IndexedDB persistence + localStorage mirror, outbox sync client, Cloudflare Worker server
+(`server/`) all implemented and tested. Phase-1 names/signatures unchanged; additions are marked *(added)*.
+
+### Decisions (v1)
+- `nextSide` is always the opposite of the last segment's side (no heuristics).
+- Two concurrently running feeds (both phones started one offline) are **both kept**; the newest is
+  `useActiveFeed().feed`, the rest are in `.others`. Core never auto-ends one; the UI may offer end/discard.
+- Member names are free text (≤60 chars). Re-joining with an existing member's name adopts that member.
+- Bottle amounts are **oz only** (0.25 steps).
 
 ## 1. Entities
 
@@ -20,6 +27,8 @@ Every synced record (`Entry`) has:
 | `deleted` | boolean | tombstone; synced, never hard-deleted; hidden from hooks/metrics |
 | `loggedBy` | `{id, name}` | member who created it (name snapshot) |
 | `deviceId` | string | install-random UUID that wrote this version (LWW tie-break) |
+| `source?` | `'app' \| 'nara'` | *(added)* origin; absent = app |
+| `externalId?` | string ≤128 | *(added)* id in the source system (Nara `_activityKey`) |
 
 `kind` discriminates:
 
@@ -101,18 +110,24 @@ same side" heuristic in v1 (open question).
   `readInviteFromLocation()` returns the code when the app is opened from a link (UI then asks for "your name" and calls `joinHousehold`).
 - `householdId` = first 16 bytes of SHA-256(secret) as hex, so the server can route any secret to its Durable
   Object; the DO stores only SHA-256(secret) and checks it in constant time.
-- Join: `POST /api/households/join {secret}` → `{householdId}` (404 unknown code). Then a full pull (`since: null`).
+- Join: `POST /api/households/join` with `Authorization: Bearer <secret>` (a JSON body `{secret}` also works)
+  → `{householdId, members: Member[]}`; **401** for an unknown/malformed code. Then a full pull (`since: null`).
 - Local entries created before create/join are stamped with the `householdId` and pushed (so either phone can
   start offline). `leave()` only forgets the household locally.
 - Auth for every later call: `Authorization: Bearer <secret>`. No accounts.
 
 ## 5. Sync protocol
-**Local-first.** IndexedDB holds all entries + meta (deviceId, me, householdId, secret, cursor, clock offset) +
-an **outbox** keyed by entry id (latest local version per id only, so repeated timer edits coalesce).
+**Local-first.** IndexedDB (idb-keyval, DB `baby-feed`, store `kv`) holds `meta` (deviceId, me, householdId,
+secret, cursor, clockOffsetMs, lastSyncedAt), `e:<id>` entries and `o:<id>` outbox markers (latest local version
+per id only, so repeated timer edits coalesce). Writes are batched (setTimeout 0) and flushed on
+`pagehide`/hidden. A **synchronous localStorage mirror** (`baby-feed:v1:mirror`) holds the meta + running/paused
+feeds + locally written entries not yet confirmed in IndexedDB; it is read synchronously at startup (so identity
+and a running timer show before IndexedDB loads — `snapshot.ready` / `useCoreReady()` turn true after) and merged
+by LWW (mirror-only local versions are re-queued). The cursor is persisted only after the pulled entries are.
 
 `POST /api/sync` (Bearer secret):
 ```ts
-request:  { since: string | null, changes: Entry[] /* ≤500 */, deviceId: string }
+request:  { since: string | null, changes: Entry[] /* ≤500 and ≤192 KB from the client */, deviceId: string }
 response: { changes: Entry[], cursor: string, hasMore: boolean, serverNow: number,
             rejected: { id: string, reason: string }[] }
 ```
@@ -134,7 +149,8 @@ response: { changes: Entry[], cursor: string, hasMore: boolean, serverNow: numbe
   (or last known).
 - **Polling:** every 4 s while `document.visibilityState === 'visible'` and online; immediately (debounced 300 ms)
   after any local change; once on `visibilitychange → visible` and on `online`. Stops when hidden. On errors,
-  exponential backoff 5 s → 60 s. 401/404 on sync = household gone → `state 'error'`.
+  exponential backoff 5 s → 60 s with ±20 % jitter. 401 on sync = code no longer valid → `state 'error'`.
+  A request loops (up to 50 rounds) while `hasMore` or the outbox still has entries (e.g. after a big import).
 - `useSync().state`: `'idle'` (up to date or no household) | `'syncing'` | `'offline'` (navigator offline or
   network failure; outbox keeps growing) | `'error'` (server rejected / auth). `pending` = outbox size.
 
@@ -148,7 +164,14 @@ on `/workspace/poker-coach/server`:
 - CORS allow-list `ALLOWED_ORIGINS` in `wrangler.jsonc`: `https://samjreij94.github.io` + localhost/127.0.0.1 on
   5173 (vite dev) and 4173 (vite preview). Requests without Origin allowed (curl/tests). Headers allowed:
   `Content-Type, Authorization`.
-- Best-effort per-IP fixed-window rate limit (per isolate) on create (10/min) and join (30/min); 429 + Retry-After.
+- Best-effort per-IP fixed-window rate limit (per isolate): create 10/min, join 30/min, sync 300/min; 429 + `Retry-After: 60`.
+- Code layout: `server/src/logic.ts` (pure: validation, LWW, cursor paging, `Household` over a `HouseholdStorage`),
+  `server/src/app.ts` (pure Fetch-API router + `createMemoryServer()` used by the client tests),
+  `server/src/index.ts` (Worker + `HouseholdDO` with a SQLite `HouseholdStorage`; RPC methods create/join/sync).
+- Validation per entry: id `[A-Za-z0-9-]{8,64}`, matching householdId, finite timestamps, `updatedAt` ≤ server
+  now + 24 h, loggedBy/deviceId strings, note ≤1000, source/externalId, kind-specific checks (segments
+  consistent with status, amountOz 0.25 steps ≤20, milk enum, member name ≤60), ≤8 KB serialized. Invalid
+  entries are returned in `rejected` (the rest of the batch is applied). Body ≤256 KB (413), ≤500 changes (413).
 - No secrets in logs.
 
 ## 7. Config, local dev, deploy
@@ -156,5 +179,31 @@ on `/workspace/poker-coach/server`:
   at build time once the Worker URL exists (e.g. `https://baby-feed-sync.<account>.workers.dev`).
 - Local end-to-end: `cd server && npm run dev` (`wrangler dev --local --port 8787`, Node 22 at
   `~/.local/node-v22.23.3-linux-x64/bin`), `npm run dev` for the app, two browser profiles = two phones.
+  `npm --prefix server run smoke` runs two simulated phones (real core) against the running server.
 - Deploy steps live in `server/README.md` (needs a Cloudflare API token; not available yet).
 - App deploy: `npm run deploy` (gh-pages, base `/baby-feed/`) to `samjreij94/baby-feed` — not pushed yet.
+
+## 8. Additive API (phase 2)
+- `useCoreReady(): boolean` — IndexedDB loaded (snapshot `ready`).
+- `useFeedActions()` also has `importEntries`.
+- `FeedCore`: `ready: Promise<void>`, `flush()`, `syncNow()`, `startAutoSync()`, `dispose()`, `allEntries()`,
+  `importEntries()`. `CoreOptions`: `storage ('idb'|'memory'|KvStorage)`, `dbName`, `mirror`, `mirrorKey`,
+  `fetch`, `autoSync`, `pollMs`, `debounceMs`. Tests: `new FeedCore({ storage: 'memory', mirror: false, autoSync: false })`.
+- Exports: `createMemoryStorage`, `createIdbStorage`, `NetworkError`, `HttpError`, types `ImportResult`,
+  `NaraImportHook`, `NaraImportPreview`, `NaraImportStatus`.
+- `JoinHouseholdResponse.members`.
+
+## 9. Nara import
+Pure parser `src/core/import/nara.ts` (separate module, lazy-loaded): `parseNaraCsv(text, {me, members,
+caregiverMap?, deviceId, householdId}) → {preview, entries: Feed[]}` with deterministic ids (UUID v5 of Nara's
+`_activityKey`), `source: 'nara'`, `externalId`.
+
+- `importEntries(entries: Feed[]): Promise<{added, skippedExisting, skippedDeleted, invalid}>` — inserts only ids
+  not present locally (never overwrites a local edit, never resurrects a tombstone), stamps the current
+  `householdId` when joined, keeps the given version (`updatedAt`/`deviceId`), validates (invalid → `invalid`),
+  queues everything in the outbox, persists in ONE IndexedDB batch (1,000 entries ≪ 1 s), then syncs in
+  ≤500-entry / ≤192 KB requests. Re-importing on either phone is idempotent (same ids → `skippedExisting`).
+- `useNaraImport()` → `{status: 'idle'|'parsing'|'ready'|'importing'|'done'|'error', preview, error, result,
+  parseFile(file), confirm(caregiverMap?), reset()}`. `parseFile` reads + parses (dynamic `import('./import/nara')`,
+  so it's a separate chunk); `confirm(map)` re-parses with the caregiver → member map if given, then
+  `importEntries`; `result` is the ImportResult.
