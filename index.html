@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" style="background:#f7f2ec">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/baby-feed/icons/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/baby-feed/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/baby-feed/manifest.webmanifest" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+    <!-- Updated at runtime by src/ui/theme.ts (day #f7f2ec / night #15100b). -->
+    <meta name="theme-color" content="#f7f2ec" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- black-translucent: the app paints behind the status bar (white icons). The day theme puts a deep sage band
+         under it (.app::before, height = safe-area-inset-top) so the icons stay legible; night uses the dark background. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Feeds" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="description" content="Baby feeding tracker for two parents" />
+    <title>Baby Feed</title>
+    <script>
+      // Apply the theme before first paint (no flash of day colours at 3 AM). Mirrors src/ui/theme.ts.
+      (function () {
+        try {
+          var p = JSON.parse(localStorage.getItem('bf.ui.prefs.v1') || '{}').night || 'auto';
+          var h = new Date().getHours();
+          var night = p === 'on' || (p === 'auto' && (h >= 20 || h < 7));
+          var c = night ? '#15100b' : '#f7f2ec';
+          document.documentElement.dataset.theme = night ? 'night' : 'day';
+          document.documentElement.style.background = c;
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', c);
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="/baby-feed/assets/index-BxTB5Dk9.js"></script>
+    <link rel="stylesheet" crossorigin href="/baby-feed/assets/index-D3LCKtuD.css">
+  <script id="vite-plugin-pwa:register-sw" src="/baby-feed/registerSW.js" defer></script></head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
