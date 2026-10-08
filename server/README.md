@@ -29,6 +29,13 @@ npm run smoke         # SYNC_URL=http://localhost:8787 by default
 `ALLOWED_ORIGINS` (wrangler.jsonc) allows `https://samjreij94.github.io` and localhost/127.0.0.1 on 5173 (vite dev)
 and 4173 (vite preview). Requests without an Origin header (curl, scripts) are allowed.
 
+## Live
+
+Deployed 2026-10-08 to Samir's Cloudflare account (workers.dev subdomain `samjreij94`):
+**https://baby-feed-sync.samjreij94.workers.dev** (`/health` → `ok`). The production client build reads it from
+`/.env.production` (`VITE_API_BASE_URL`), so a plain `npm run build` / `npm run deploy` at the repo root targets it.
+Redeploy the Worker with `cd server && npx wrangler deploy` (Node 22).
+
 ## Deploy (needs a Cloudflare account)
 
 1. Auth, either:
@@ -41,10 +48,8 @@ and 4173 (vite preview). Requests without an Origin header (curl, scripts) are a
 3. Check: `curl https://baby-feed-sync.<subdomain>.workers.dev/health` → `ok`; optionally
    `SYNC_URL=https://baby-feed-sync.<subdomain>.workers.dev ORIGIN=https://samjreij94.github.io npm run smoke`
    (creates one throwaway household).
-4. Build + publish the app pointing at it (repo root):
-   ```sh
-   VITE_API_BASE_URL=https://baby-feed-sync.<subdomain>.workers.dev npm run deploy
-   ```
+4. Build + publish the app pointing at it (repo root): set `VITE_API_BASE_URL` in `/.env.production`
+   (already set to the live URL above), then `npm run deploy`.
    (`npm run deploy` = build + `gh-pages -d dist`, base `/baby-feed/`.)
 
 Changing the DO class or storage later needs a new migration tag in `wrangler.jsonc`; never edit `v1`.
