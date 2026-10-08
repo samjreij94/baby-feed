@@ -13,7 +13,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: 'script-defer',
       manifest: false,
-      includeAssets: ['manifest.webmanifest'],
+      includeAssets: ['manifest.webmanifest', 'icons/*.png'],
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,json}'],
         navigateFallback: 'index.html',
