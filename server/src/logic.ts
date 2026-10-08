@@ -70,6 +70,10 @@ export function validateEntry(e: unknown, householdId: string, now: number): str
   switch (e.kind) {
     case 'member':
       return isStr(e.name, LIMITS.maxName) ? null : 'bad name';
+    case 'household':
+      // One profile record per household: its id IS the householdId. '' = name cleared.
+      if (e.id !== householdId) return 'household id mismatch';
+      return isStr(e.babyName, LIMITS.maxName, 0) ? null : 'bad babyName';
     case 'bottle':
       if (!isNum(e.at)) return 'bad at';
       if (typeof e.amountOz !== 'number' || !validAmountOz(e.amountOz)) return 'bad amountOz';

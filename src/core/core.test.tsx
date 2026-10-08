@@ -1,7 +1,8 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, renderHook, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import * as F from './feed';
-import { CoreProvider, FeedCore, useActiveFeed, useLastFeed } from './index';
+import { CoreProvider, FeedCore, useActiveFeed, useHousehold, useLastFeed, useMetrics } from './index';
 import { formatInviteCode, generateInviteCode, inviteLink, parseInvite } from './invite';
 import { compareVersion, lww, nextUpdatedAt } from './merge';
 import { computeMetrics } from './metrics';
@@ -100,5 +101,30 @@ describe('hooks (smoke)', () => {
     await act(() => core.startBreast('R').then(() => undefined));
     expect(screen.getByTestId('side')).toHaveTextContent('R');
     expect(screen.getByTestId('next')).toHaveTextContent('L');
+  });
+});
+
+describe('hooks (added): useMetrics range/bucket/maxGap, useHousehold babyName', () => {
+  it("useMetrics('all', { bucket, maxGapMinutes }) and the numeric form", async () => {
+    const { core, now } = mkCore(new Date(2026, 9, 8, 12, 0).getTime());
+    await core.setMe('Samir');
+    await core.addBottle({ amountOz: 2, at: now() - 26 * 60 * MIN });
+    await core.addBottle({ amountOz: 1, at: now() - 2 * 60 * MIN });
+    await core.addBottle({ amountOz: 1, at: now() - 60 * MIN });
+    const wrapper = ({ children }: { children: ReactNode }) => <CoreProvider core={core}>{children}</CoreProvider>;
+    const { result } = renderHook(() => ({ all: useMetrics('all', { bucket: 'week', maxGapMinutes: 720 }), d7: useMetrics(7) }), { wrapper });
+    expect(result.current.all).toMatchObject({ bucket: 'week', maxGapMinutes: 720, rangeDays: 2, firstFeedAt: now() - 26 * 60 * MIN, avgGapMinutes: 60 });
+    expect(result.current.all.buckets).toHaveLength(1);
+    expect(result.current.d7).toMatchObject({ bucket: 'day', maxGapMinutes: null, rangeDays: 7, avgGapMinutes: 750 });
+  });
+
+  it('useHousehold exposes babyName + setBabyName', async () => {
+    const { core } = mkCore();
+    await core.setMe('Samir');
+    const wrapper = ({ children }: { children: ReactNode }) => <CoreProvider core={core}>{children}</CoreProvider>;
+    const { result } = renderHook(() => useHousehold(), { wrapper });
+    expect(result.current.babyName).toBe('');
+    await act(() => result.current.setBabyName('Josephine'));
+    expect(result.current.babyName).toBe('Josephine');
   });
 });

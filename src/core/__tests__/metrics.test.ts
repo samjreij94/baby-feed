@@ -92,4 +92,113 @@ describe('metrics', () => {
     expect(d.bottleOz).toBe(6.75);
     expect(d.bottleOzByMilk).toEqual({ breast: 2, formula: 3.5, unspecified: 1.25 });
   });
+
+  describe('ranges, buckets, maxGapMinutes (added)', () => {
+    it("'all' runs from the first live feed's day through today; firstFeedAt ignores deleted feeds", () => {
+      const now = local(2026, 10, 8, 15);
+      const gone = { ...bottle(local(2026, 9, 1, 9), 9), deleted: true };
+      const feeds: Feed[] = [gone, bottle(local(2026, 10, 3, 22), 2), bottle(local(2026, 10, 8, 7), 3)];
+      const m = computeMetrics(feeds, 'all', now);
+      expect(m.firstFeedAt).toBe(local(2026, 10, 3, 22));
+      expect(m.rangeDays).toBe(6);
+      expect(m.days[0]!.date).toBe('2026-10-03');
+      expect(m.days.at(-1)!.date).toBe('2026-10-08');
+      expect([m.from, m.to]).toEqual([local(2026, 10, 3), local(2026, 10, 9)]);
+      expect(m.totals.bottleOz).toBe(5);
+      expect(m.perDayAvg.bottleOz).toBe(0.8);
+      // firstFeedAt is overall, also on a numeric range
+      expect(computeMetrics(feeds, 1, now).firstFeedAt).toBe(local(2026, 10, 3, 22));
+    });
+
+    it("'all' with no feeds: no days, null gap, zero averages", () => {
+      const m = computeMetrics([], 'all', local(2026, 10, 8, 15), { bucket: 'week' });
+      expect(m).toMatchObject({ rangeDays: 0, days: [], buckets: [], firstFeedAt: null, from: null, to: null, avgGapMinutes: null });
+      expect(m.perDayAvg).toEqual({ breastMinutes: 0, feeds: 0, bottleOz: 0 });
+    });
+
+    it('{ from, to } counts feeds with from ≤ start < to; days are the local days touched; to defaults to today', () => {
+      const now = local(2026, 10, 8, 15);
+      const feeds: Feed[] = [bottle(local(2026, 10, 1, 8), 1), bottle(local(2026, 10, 2, 8), 2), bottle(local(2026, 10, 4, 8), 4)];
+      const m = computeMetrics(feeds, { from: local(2026, 10, 2), to: local(2026, 10, 4) }, now);
+      expect(m.days.map((d) => d.date)).toEqual(['2026-10-02', '2026-10-03']);
+      expect(m.totals.bottleOz).toBe(2);
+      const open = computeMetrics(feeds, { from: local(2026, 10, 2) }, now);
+      expect(open.days.at(-1)!.date).toBe('2026-10-08');
+      expect(open.totals.bottleOz).toBe(6);
+      // numeric and { days } forms are identical
+      expect(computeMetrics(feeds, { days: 7 }, now)).toEqual(computeMetrics(feeds, 7, now));
+    });
+
+    it('week buckets start Monday; partial first/last weeks; totals + per-day averages per bucket', () => {
+      // Thu Oct 1 … Thu Oct 15 2026 → weeks of Mon Sep 28 (4 days: Thu–Sun), Oct 5 (7), Oct 12 (4: Mon–Thu)
+      const now = local(2026, 10, 15, 20);
+      const feeds: Feed[] = [
+        bottle(local(2026, 10, 1, 8), 2),
+        breast([['L', local(2026, 10, 4, 9), local(2026, 10, 4, 9, 10)], ['R', local(2026, 10, 4, 9, 10), local(2026, 10, 4, 9, 30)]]),
+        bottle(local(2026, 10, 5, 8), 3.5),
+        bottle(local(2026, 10, 11, 23, 59), 1.5),
+        bottle(local(2026, 10, 12, 0, 30), 1),
+      ];
+      const m = computeMetrics(feeds, 'all', now, { bucket: 'week' });
+      expect(m.bucket).toBe('week');
+      expect(m.buckets.map((b) => [b.key, b.days, b.fullDays, b.partial])).toEqual([
+        ['2026-09-28', 4, 7, true],
+        ['2026-10-05', 7, 7, false],
+        ['2026-10-12', 4, 7, true],
+      ]);
+      const [w1, w2, w3] = m.buckets;
+      expect(new Date(w1!.start).getDay()).toBe(1); // Monday
+      expect(w1!.end).toBe(w2!.start);
+      expect(w1!.label).toBe('Week of Sep 28');
+      expect(w1!.totals).toEqual({ breastMinutes: 30, minutesBySide: { L: 10, R: 20 }, feeds: 2, breastFeeds: 1, bottleFeeds: 1, bottleOz: 2 });
+      expect(w1!.perDayAvg).toEqual({ breastMinutes: 7.5, minutesBySide: { L: 2.5, R: 5 }, feeds: 0.5, bottleOz: 0.5 });
+      expect(w2!.totals.bottleOz).toBe(5); // Sun 23:59 belongs to the week of Oct 5
+      expect(w2!.perDayAvg.bottleOz).toBe(0.71);
+      expect(w3!.totals.bottleOz).toBe(1); // Mon 00:30 starts the next week
+      // bucket totals add up to the range totals
+      expect(m.buckets.reduce((a, b) => a + b.totals.feeds, 0)).toBe(m.totals.feeds);
+    });
+
+    it('month buckets are calendar months; day buckets mirror days and are never partial', () => {
+      const now = local(2026, 11, 10, 12);
+      const feeds: Feed[] = [bottle(local(2026, 9, 20, 8), 2), bottle(local(2026, 10, 31, 23), 3), bottle(local(2026, 11, 1, 1), 4)];
+      const m = computeMetrics(feeds, 'all', now, { bucket: 'month' });
+      expect(m.buckets.map((b) => [b.label, b.days, b.fullDays, b.partial, b.totals.bottleOz])).toEqual([
+        ['September 2026', 11, 30, true, 2],
+        ['October 2026', 31, 31, false, 3],
+        ['November 2026', 10, 30, true, 4],
+      ]);
+      const d = computeMetrics(feeds, 7, now);
+      expect(d.bucket).toBe('day');
+      expect(d.buckets).toHaveLength(7);
+      expect(d.buckets.every((b) => b.days === 1 && b.fullDays === 1 && !b.partial)).toBe(true);
+      expect(d.buckets.at(-1)!.label).toBe('Tue, Nov 10');
+      expect(d.buckets.map((b) => b.key)).toEqual(d.days.map((x) => x.date));
+    });
+
+    it('maxGapMinutes leaves long gaps out of the headline; omitted keeps every gap (old behaviour)', () => {
+      const t = local(2026, 10, 7, 20);
+      // gaps: 180 (20:00→23:00), 900 overnight (23:00→14:00, > 720), 120 (14:00→16:00)
+      const feeds: Feed[] = [bottle(t, 2), bottle(t + 180 * MIN, 2), bottle(t + 1080 * MIN, 2), bottle(t + 1200 * MIN, 2)];
+      const now = t + 1300 * MIN;
+      expect(computeMetrics(feeds, 7, now).avgGapMinutes).toBe(400); // (180 + 900 + 120) / 3
+      const capped = computeMetrics(feeds, 7, now, { maxGapMinutes: 720 });
+      expect(capped.avgGapMinutes).toBe(150); // (180 + 120) / 2
+      expect(capped.maxGapMinutes).toBe(720);
+      expect(computeMetrics(feeds, 7, now).maxGapMinutes).toBeNull();
+      // only gaps > max are dropped (720 itself counts)
+      expect(computeMetrics([bottle(t, 1), bottle(t + 720 * MIN, 1)], 7, now, { maxGapMinutes: 720 }).avgGapMinutes).toBe(720);
+      // every gap too long → null
+      expect(computeMetrics([bottle(t, 1), bottle(t + 721 * MIN, 1)], 7, now, { maxGapMinutes: 720 }).avgGapMinutes).toBeNull();
+    });
+
+    it("bucket gaps belong to the later feed's bucket; its predecessor may be before the range", () => {
+      const now = local(2026, 10, 8, 12);
+      const feeds: Feed[] = [bottle(local(2026, 10, 7, 23), 1), bottle(local(2026, 10, 8, 2), 1), bottle(local(2026, 10, 8, 5), 1)];
+      const m = computeMetrics(feeds, 1, now, { maxGapMinutes: 720 });
+      expect(m.buckets[0]!.avgGapMinutes).toBe(180); // 23:00→02:00 and 02:00→05:00
+      expect(m.avgGapMinutes).toBe(180); // headline: in-range pair only (02:00→05:00)
+      expect(computeMetrics(feeds, 2, now, { maxGapMinutes: 720 }).buckets[0]!.avgGapMinutes).toBeNull();
+    });
+  });
 });

@@ -9,7 +9,7 @@ export type * from './types';
 export { FeedCore, getCore, ActiveFeedExistsError, NotImplementedError, defaultApiBaseUrl, type CoreSnapshot, type CoreOptions } from './store';
 export { CoreProvider, useCore, useNow, useFeeds, useActiveFeed, useLastFeed, useMetrics, useHousehold, useSync, useFeedActions, useCoreReady, useNaraImport, type ActiveFeedHook, type NaraImportHook, type NaraImportPreview, type NaraImportStatus } from './hooks';
 export { opposite, feedStart, sideMs, nursingMs, lastFeedInfo, activeFeedView, validAmountOz } from './feed';
-export { computeMetrics, localDateKey, startOfLocalDay } from './metrics';
+export { computeMetrics, localDateKey, startOfLocalDay, startOfLocalWeek, startOfLocalMonth } from './metrics';
 export { parseInvite, formatInviteCode, readInviteFromLocation } from './invite';
 export { createMemoryStorage, createIdbStorage, type KvStorage, type SyncKv } from './storage';
 export { NetworkError, HttpError, type FetchLike } from './api';

@@ -38,10 +38,14 @@ export function resume(f: BreastFeed, at: number): BreastFeed {
   return { ...f, segments: [...f.segments, { side, startedAt: at, endedAt: null }], pausedAt: null, status: 'running' };
 }
 
-/** Close everything. Ending while paused uses pausedAt as endedAt (the feed really stopped at the pause). */
+/**
+ * Close everything. Ending while paused uses pausedAt as endedAt (the feed really stopped at the pause).
+ * endedAt is never before the last segment's start (a feed started on a phone whose clock is slightly ahead),
+ * so the result always validates.
+ */
 export function end(f: BreastFeed, at: number): BreastFeed {
   if (f.status === 'ended') return f;
-  const endedAt = f.status === 'paused' && f.pausedAt !== null ? f.pausedAt : at;
+  const endedAt = f.status === 'paused' && f.pausedAt !== null ? f.pausedAt : Math.max(at, f.segments.at(-1)?.startedAt ?? at);
   return { ...f, segments: closeOpen(f.segments, endedAt), endedAt, pausedAt: null, status: 'ended' };
 }
 

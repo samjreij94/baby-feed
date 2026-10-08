@@ -77,6 +77,23 @@ describe('breast timer segments', () => {
     expect(core.getSnapshot().feeds[0]).toEqual(f);
   });
 
+  it('end never puts endedAt before the open segment start (feed from a phone whose clock is ahead)', () => {
+    const f = F.startFields('L', 10 * MIN) as BreastFeed;
+    const ended = F.end(f, 9 * MIN);
+    expect(ended.endedAt).toBe(10 * MIN);
+    expect(F.validateBreast(ended)).toBeNull();
+    expect(F.end(f, 12 * MIN).endedAt).toBe(12 * MIN);
+  });
+
+  it('end(id) with a non-string argument (e.g. a click event) ends the active feed', async () => {
+    const { core, c } = setup();
+    await core.setMe('Samir');
+    await core.startBreast('L');
+    c.advance(MIN);
+    const f = await core.end({ type: 'click' } as unknown as string);
+    expect(f?.status).toBe('ended');
+  });
+
   it('pure ops are no-ops in the wrong state', () => {
     const f = { ...F.startFields('L', 0) } as BreastFeed;
     expect(F.resume(f, 5)).toBe(f);

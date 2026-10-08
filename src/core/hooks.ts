@@ -3,7 +3,7 @@ import { createContext, createElement, useCallback, useRef, useContext, useEffec
 import { activeFeedView, feedStart, lastFeedInfo } from './feed';
 import { computeMetrics } from './metrics';
 import { getCore, type CoreSnapshot, type FeedCore } from './store';
-import type { ImportResult, Member, ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, Side, SyncView } from './types';
+import type { ImportResult, Member, ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, MetricsOptions, MetricsRange, Side, SyncView } from './types';
 
 const Ctx = createContext<FeedCore | null>(null);
 
@@ -51,7 +51,8 @@ export interface ActiveFeedHook extends ActiveFeedView {
   switchSide(): Promise<BreastFeed | null>;
   pause(): Promise<BreastFeed | null>;
   resume(): Promise<BreastFeed | null>;
-  end(): Promise<BreastFeed | null>;
+  /** End the active feed, or (with an id) another running/paused feed — e.g. the other phone's in a conflict. */
+  end(id?: string): Promise<BreastFeed | null>;
   discard(): Promise<void>;
 }
 
@@ -67,7 +68,7 @@ export function useActiveFeed(): ActiveFeedHook {
     switchSide: () => core.switchSide(),
     pause: () => core.pause(),
     resume: () => core.resume(),
-    end: () => core.end(),
+    end: (id) => core.end(id),
     discard: () => core.discardActive(),
   };
 }
@@ -80,11 +81,20 @@ export function useLastFeed(): LastFeedInfo {
   return useMemo(() => lastFeedInfo(feeds, Math.max(now, core.now())), [feeds, now, core]);
 }
 
-/** Chart metrics for the last rangeDays local days (7/14/30). Recomputes on data change and every minute. */
-export function useMetrics(rangeDays: number): Metrics {
+/**
+ * Chart metrics (see computeMetrics). Recomputes on data change and every minute.
+ *   useMetrics(7)                                         // original form: today + previous 6 local days
+ *   useMetrics('all', { bucket: 'week', maxGapMinutes: 720 })
+ *   useMetrics({ from, to }, { bucket: 'month' })
+ */
+export function useMetrics(range: MetricsRange, opts?: MetricsOptions): Metrics {
   const { feeds } = useSnapshot();
   const now = useNow(60_000);
-  return useMemo(() => computeMetrics(feeds, rangeDays, now), [feeds, rangeDays, now]);
+  const key = JSON.stringify([range, opts?.bucket ?? null, opts?.maxGapMinutes ?? null]);
+  return useMemo(() => {
+    const [r, bucket, maxGapMinutes] = JSON.parse(key) as [MetricsRange, MetricsOptions['bucket'] | null, number | null];
+    return computeMetrics(feeds, r, now, { ...(bucket ? { bucket } : {}), ...(maxGapMinutes !== null ? { maxGapMinutes } : {}) });
+  }, [feeds, key, now]);
 }
 
 export function useHousehold(): HouseholdView {
@@ -97,7 +107,9 @@ export function useHousehold(): HouseholdView {
     me: s.me,
     inviteCode: core.inviteCode,
     inviteLink: core.inviteLink,
+    babyName: s.babyName,
     setMe: (name) => core.setMe(name),
+    setBabyName: (name) => core.setBabyName(name),
     createHousehold: (name) => core.createHousehold(name),
     joinHousehold: (code, name) => core.joinHousehold(code, name),
     leave: () => core.leave(),

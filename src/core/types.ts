@@ -81,9 +81,19 @@ export interface MemberEntry extends EntryBase {
   name: string;
 }
 
+/**
+ * *(added)* Household profile — ONE record per household, synced like any entry (LWW, outbox) so every phone
+ * shows the same baby name. `id === householdId` (32 hex chars, so it never collides with a UUID feed/member id).
+ */
+export interface HouseholdEntry extends EntryBase {
+  kind: 'household';
+  /** Baby's name, trimmed, ≤60 chars. '' = cleared (a clear syncs like any other rename). */
+  babyName: string;
+}
+
 export type Feed = BreastFeed | BottleFeed;
 /** Everything that travels over /api/sync. */
-export type Entry = Feed | MemberEntry;
+export type Entry = Feed | MemberEntry | HouseholdEntry;
 
 /** Start time of any feed (breast: startedAt, bottle: at). */
 export type FeedStart = EpochMs;
@@ -146,24 +156,85 @@ export interface DayMetrics {
   bottleOzByMilk: { breast: number; formula: number; unspecified: number };
 }
 
+export type MetricsBucketKind = 'day' | 'week' | 'month';
+
+/**
+ * Metrics range *(extended)*:
+ * - `number` / `{ days }`: today + the previous n−1 local calendar days (original form; 7/14/30).
+ * - `{ from, to? }`: feeds with `from ≤ start < to`; `to` defaults to the end of today. Days = every local calendar
+ *   day touched by [from, to).
+ * - `'all'`: the first live feed's local day through today (no feeds → no days).
+ */
+export type MetricsRange = number | { days: number } | { from: EpochMs; to?: EpochMs } | 'all';
+
+export interface MetricsOptions {
+  /** Grouping of `buckets` (default 'day'). Weeks start Monday 00:00 local; months are calendar months. */
+  bucket?: MetricsBucketKind;
+  /**
+   * Gaps longer than this (minutes) are left out of `avgGapMinutes` (overnight / logging holes). The UI passes 720.
+   * Omitted = every gap counts (original behaviour).
+   */
+  maxGapMinutes?: number;
+}
+
+export interface MetricsTotals {
+  breastMinutes: number;
+  minutesBySide: SideMs;
+  feeds: number;
+  breastFeeds: number;
+  bottleFeeds: number;
+  bottleOz: number;
+}
+
+export interface MetricsBucket {
+  kind: MetricsBucketKind;
+  /** Local midnight at the bucket's calendar start (day / Monday / 1st of month) — may be before the range. */
+  start: EpochMs;
+  /** Local midnight after the bucket's calendar end (exclusive). */
+  end: EpochMs;
+  /** 'YYYY-MM-DD' of `start`. */
+  key: string;
+  /** 'Thu, Oct 8' (day) · 'Week of Oct 5' (week; year added when the range spans years) · 'October 2026' (month). */
+  label: string;
+  /** Days of this bucket inside the range (the divisor for perDayAvg). */
+  days: number;
+  /** Calendar length of the bucket: 1, 7 or days in the month. */
+  fullDays: number;
+  /** days < fullDays (first/last week or month cut by the range). Always false for 'day'. */
+  partial: boolean;
+  totals: MetricsTotals;
+  /** totals ÷ days (minutes and feeds 0.1 precision, oz 0.01). */
+  perDayAvg: { breastMinutes: number; minutesBySide: SideMs; feeds: number; bottleOz: number };
+  /** Mean gap whose LATER feed starts in this bucket (maxGapMinutes applied); null if none. */
+  avgGapMinutes: number | null;
+}
+
 export interface Metrics {
+  /** Number of days in the range (= days.length). */
   rangeDays: number;
-  /** Oldest → newest; length === rangeDays; last element is today. */
+  /** Resolved range: local midnight of the first day … exclusive end (null/null for 'all' with no feeds). */
+  from: EpochMs | null;
+  to: EpochMs | null;
+  /** Oldest → newest, one per local calendar day in the range (for numeric/{days} ranges the last one is today). */
   days: DayMetrics[];
-  totals: {
-    breastMinutes: number;
-    minutesBySide: SideMs;
-    feeds: number;
-    breastFeeds: number;
-    bottleFeeds: number;
-    bottleOz: number;
-  };
-  /** Per-day averages over the whole range (divide totals by rangeDays). */
+  totals: MetricsTotals;
+  /** Per-day averages over the whole range (divide totals by rangeDays; 0 when there are no days). */
   perDayAvg: { breastMinutes: number; feeds: number; bottleOz: number };
-  /** Mean minutes between consecutive feed starts (breast + bottle) in range; null if < 2 feeds. */
+  /**
+   * Mean minutes between consecutive feed starts (breast + bottle) in range; gaps > maxGapMinutes excluded when
+   * that option is set. null if there is no (counted) gap.
+   */
   avgGapMinutes: number | null;
   /** Mean nursing minutes of ENDED breast feeds in range; null if none. */
   avgFeedMinutes: number | null;
+  /** *(added)* Start of the earliest live feed overall (not limited to the range); null when there are no feeds. */
+  firstFeedAt: EpochMs | null;
+  /** *(added)* Grouping used for `buckets`. */
+  bucket: MetricsBucketKind;
+  /** *(added)* Days grouped by `bucket`, oldest → newest. */
+  buckets: MetricsBucket[];
+  /** *(added)* The maxGapMinutes applied, or null (all gaps counted). */
+  maxGapMinutes: number | null;
 }
 
 // ── Inputs ───────────────────────────────────────────────
@@ -217,6 +288,13 @@ export interface HouseholdView {
   inviteCode: string | null;
   /** `${appUrl}#join=<code>` (ungrouped). null when status 'none'. */
   inviteLink: string | null;
+  /**
+   * *(added)* Baby's name from the synced household record ('' = not set / cleared). Before a household exists it's
+   * this device's pending value, uploaded on createHousehold (or on join if the household has no name yet).
+   */
+  babyName: string;
+  /** *(added)* Any member can set it; trimmed, ≤60 chars; '' (or whitespace) clears it on both phones. */
+  setBabyName(name: string): Promise<void>;
   /** Set/rename this device's member (works before a household exists). */
   setMe(name: string): Promise<Member>;
   /** POST /api/households; stamps local entries with the householdId and pushes them. */

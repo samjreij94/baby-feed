@@ -192,6 +192,34 @@ describe('outbox + sync', () => {
     expect(v.others).toHaveLength(1);
   });
 
+  it('end(id) ends the OTHER running feed (not the active one) and it syncs', async () => {
+    const { a, b, clock } = await pair();
+    a.setOffline(true);
+    b.setOffline(true);
+    const fa = await a.core.startBreast('L');
+    clock.advance(1000);
+    const fb = await b.core.startBreast('R');
+    a.setOffline(false);
+    b.setOffline(false);
+    await a.core.syncNow();
+    await b.core.syncNow();
+    await a.core.syncNow();
+    clock.advance(4 * MIN);
+    // On A the newest (B's) feed is active; A ends its own feed, which is in others.
+    expect(activeFeedView(a.core.getSnapshot().feeds, a.core.now()).others.map((f) => f.id)).toEqual([fa.id]);
+    const ended = (await a.core.end(fa.id))!;
+    expect(ended).toMatchObject({ id: fa.id, status: 'ended', endedAt: a.core.now(), pausedAt: null });
+    expect(ended.segments.at(-1)!.endedAt).toBe(a.core.now());
+    expect(await a.core.end(fa.id)).toBeNull(); // already ended
+    expect(await a.core.end('nope-0000')).toBeNull();
+    await a.core.syncNow();
+    await b.core.syncNow();
+    const vb = activeFeedView(b.core.getSnapshot().feeds, b.core.now());
+    expect(vb.feed?.id).toBe(fb.id);
+    expect(vb.others).toEqual([]);
+    expect(b.core.getSnapshot().feeds.find((f) => f.id === fa.id)).toMatchObject({ status: 'ended' });
+  });
+
   it('pages through many changes with hasMore', async () => {
     const clock = fakeClock();
     const server = createMemoryServer({ now: clock.now, pageSize: 3 });
@@ -255,5 +283,75 @@ describe('importEntries', () => {
     await b.core.syncNow();
     expect(b.core.getSnapshot().feeds).toHaveLength(1001);
     expect(await b.core.importEntries(batch)).toMatchObject({ added: 0 }); // idempotent on the other phone
+  });
+});
+
+describe('baby name (household record)', () => {
+  it('phone B sees the name phone A set; B renames, A sees it; a clear syncs too', async () => {
+    const { a, b } = await pair();
+    expect(b.core.getSnapshot().babyName).toBe('');
+    await a.core.setBabyName('  Josephine ');
+    expect(a.core.getSnapshot().babyName).toBe('Josephine');
+    await a.core.syncNow();
+    await b.core.syncNow();
+    expect(b.core.getSnapshot().babyName).toBe('Josephine');
+    const rec = b.core.allEntries().find((e) => e.kind === 'household')!;
+    expect(rec).toMatchObject({ id: a.core.householdId, householdId: a.core.householdId, babyName: 'Josephine', loggedBy: { name: 'Samir' } });
+    expect(b.core.getSnapshot().feeds).toEqual([]); // not a feed
+
+    await b.core.setBabyName('Josie');
+    await b.core.syncNow();
+    await a.core.syncNow();
+    expect(a.core.getSnapshot().babyName).toBe('Josie');
+
+    await a.core.setBabyName('   ');
+    await a.core.syncNow();
+    await b.core.syncNow();
+    expect(a.core.getSnapshot().babyName).toBe('');
+    expect(b.core.getSnapshot().babyName).toBe('');
+    expect(b.core.getSnapshot().sync).toMatchObject({ pending: 0, error: null });
+  });
+
+  it('a name set before creating the household is uploaded on create', async () => {
+    const s = setup();
+    await s.a.core.setMe('Samir');
+    await s.a.core.setBabyName('Josephine');
+    expect(s.a.core.getSnapshot()).toMatchObject({ householdId: null, babyName: 'Josephine' });
+    await s.a.core.createHousehold('Samir');
+    await s.b.core.joinHousehold(s.a.core.inviteCode!, 'Karyn');
+    expect(s.b.core.getSnapshot().babyName).toBe('Josephine');
+  });
+
+  it("on join the household's name wins over the joining phone's pending one; it's uploaded only if the household has none", async () => {
+    const s = setup();
+    await s.a.core.createHousehold('Samir');
+    await s.a.core.setBabyName('Josephine');
+    await s.a.core.syncNow();
+    await s.b.core.setMe('Karyn');
+    await s.b.core.setBabyName('Jo');
+    await s.b.core.joinHousehold(s.a.core.inviteCode!, 'Karyn');
+    expect(s.b.core.getSnapshot().babyName).toBe('Josephine');
+    await s.a.core.syncNow();
+    expect(s.a.core.getSnapshot().babyName).toBe('Josephine');
+
+    const t = setup();
+    await t.a.core.createHousehold('Samir'); // no name yet
+    await t.b.core.setMe('Karyn');
+    await t.b.core.setBabyName('Jo');
+    await t.b.core.joinHousehold(t.a.core.inviteCode!, 'Karyn');
+    await t.a.core.syncNow();
+    expect(t.a.core.getSnapshot().babyName).toBe('Jo');
+  });
+
+  it('survives a restart and is kept locally after leave()', async () => {
+    const { a, b } = await pair();
+    await a.core.setBabyName('Josephine');
+    await a.core.syncNow();
+    await b.core.syncNow();
+    await b.core.flush();
+    await b.reload().ready;
+    expect(b.core.getSnapshot().babyName).toBe('Josephine');
+    await b.core.leave();
+    expect(b.core.getSnapshot()).toMatchObject({ householdId: null, babyName: 'Josephine' });
   });
 });

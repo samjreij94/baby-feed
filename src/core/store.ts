@@ -16,6 +16,7 @@ import type {
   EntryBase,
   EntryPatch,
   Feed,
+  HouseholdEntry,
   ImportResult,
   Member,
   MemberEntry,
@@ -45,6 +46,8 @@ export interface CoreSnapshot {
   members: Member[];
   me: Member | null;
   householdId: string | null;
+  /** *(added)* Baby's name: the synced household record when joined, else this device's pending value. '' = none. */
+  babyName: string;
   /** Ungrouped secret, null when no household. */
   secret: string | null;
   sync: { state: SyncState; lastSyncedAt: number | null; pending: number; error: string | null; clockOffsetMs: number };
@@ -212,7 +215,7 @@ export class FeedCore {
 
   private buildSnapshot(): CoreSnapshot {
     const all = [...this.entries.values()].filter((e) => !e.deleted);
-    const feeds = all.filter((e): e is Feed => e.kind !== 'member').sort((a, b) => F.feedStart(b) - F.feedStart(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const feeds = all.filter((e): e is Feed => e.kind === 'breast' || e.kind === 'bottle').sort((a, b) => F.feedStart(b) - F.feedStart(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const members = all
       .filter((e): e is MemberEntry => e.kind === 'member')
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -224,6 +227,7 @@ export class FeedCore {
       members,
       me,
       householdId: this.meta.householdId,
+      babyName: this.householdEntry()?.babyName ?? this.meta.babyName ?? '',
       secret: this.meta.secret,
       sync: {
         state: this.syncState,
@@ -234,6 +238,13 @@ export class FeedCore {
       },
       ready: this.isReady,
     };
+  }
+
+  /** The live household record of the current household, if any. */
+  private householdEntry(): HouseholdEntry | null {
+    const hh = this.meta.householdId;
+    const e = hh ? this.entries.get(hh) : undefined;
+    return e?.kind === 'household' && !e.deleted ? e : null;
   }
 
   get inviteCode(): string | null {
@@ -381,8 +392,16 @@ export class FeedCore {
   resume() {
     return this.updateActive(F.resume);
   }
-  end() {
-    return this.updateActive(F.end);
+  /**
+   * End the active feed, or — with an id — that running/paused breast feed (e.g. the other phone's feed when two
+   * are running). Same transition as the timer's end(). Returns null if there is no such unended feed.
+   */
+  async end(id?: string): Promise<BreastFeed | null> {
+    if (typeof id !== 'string') return this.updateActive(F.end);
+    await this.ready;
+    const cur = this.entries.get(id);
+    if (!cur || cur.deleted || cur.kind !== 'breast' || cur.status === 'ended') return null;
+    return this.put(F.end(cur, this.now()), cur);
   }
   /** Delete (tombstone) the active feed — "started by mistake". */
   async discardActive(): Promise<void> {
@@ -424,7 +443,7 @@ export class FeedCore {
   async editEntry(id: string, patch: EntryPatch): Promise<Feed> {
     await this.ready;
     const cur = this.entries.get(id);
-    if (!cur || cur.deleted || cur.kind === 'member') throw new Error(`No feed ${id}`);
+    if (!cur || cur.deleted || (cur.kind !== 'breast' && cur.kind !== 'bottle')) throw new Error(`No feed ${id}`);
     const next = { ...cur, ...patch } as Feed;
     if (next.kind === 'breast') {
       const err = F.validateBreast(next);
@@ -505,6 +524,32 @@ export class FeedCore {
     return self;
   }
 
+  /**
+   * Set the baby's name for the household (any member). Trimmed, ≤60 chars; '' clears it — the clear is a normal
+   * LWW version, so it syncs too. Before a household exists it's kept on this device and uploaded on create/join.
+   */
+  async setBabyName(name: string): Promise<void> {
+    await this.ready;
+    const babyName = name.trim().slice(0, 60);
+    this.setMeta({ babyName });
+    if (this.meta.householdId) this.putBabyName(babyName);
+    else this.emit();
+  }
+
+  /** Write the household record (new LWW version) unless it already holds this name. */
+  private putBabyName(babyName: string) {
+    const hh = this.meta.householdId!;
+    const prev = this.entries.get(hh);
+    if (prev?.kind === 'household' && !prev.deleted && prev.babyName === babyName) return this.emit();
+    const now = this.now();
+    const loggedBy = this.requireMe();
+    const e: HouseholdEntry =
+      prev?.kind === 'household'
+        ? { ...prev, babyName, deleted: false, loggedBy }
+        : { id: hh, householdId: hh, createdAt: now, updatedAt: now, deleted: false, loggedBy, deviceId: this.deviceId, kind: 'household', babyName };
+    this.put(e, prev);
+  }
+
   /** Stamp local entries that have no household yet with householdId (no version bump: they were never synced). */
   private adoptHousehold(householdId: string, secret: string) {
     this.setMeta({ householdId, secret, cursor: null });
@@ -529,6 +574,7 @@ export class FeedCore {
     await this.setMe(myName);
     const res = await this.api.createHousehold();
     this.adoptHousehold(res.householdId, res.secret);
+    if (this.meta.babyName) this.putBabyName(this.meta.babyName);
     await this.flush();
     this.reschedule();
     await this.syncNow();
@@ -557,12 +603,17 @@ export class FeedCore {
     await this.flush();
     this.reschedule();
     await this.syncNow();
+    // The household's name (pulled above) wins over this phone's pending one; upload ours only if it has none.
+    if (this.meta.cursor !== null && !this.householdEntry() && this.meta.babyName) {
+      this.putBabyName(this.meta.babyName);
+      await this.syncNow();
+    }
   }
 
   /** Forget the household on this device. Local data is kept; the server is untouched. */
   async leave(): Promise<void> {
     await this.ready;
-    this.setMeta({ householdId: null, secret: null, cursor: null, lastSyncedAt: null });
+    this.setMeta({ babyName: this.snap.babyName, householdId: null, secret: null, cursor: null, lastSyncedAt: null });
     this.syncState = 'idle';
     this.syncError = null;
     this.clearTimers();

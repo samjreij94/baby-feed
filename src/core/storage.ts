@@ -25,6 +25,9 @@ export interface PersistedMeta {
   cursor: string | null;
   clockOffsetMs: number;
   lastSyncedAt: number | null;
+  /** *(added)* This device's copy of the baby name: the pending value before a household exists (uploaded on
+   * create / on join when the household has none), and the last known name after leave(). */
+  babyName?: string;
 }
 
 export const KEY = {

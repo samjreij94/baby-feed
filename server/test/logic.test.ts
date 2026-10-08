@@ -42,6 +42,19 @@ describe('validation', () => {
     expect(validateEntry(bottle(id(1), { milk: 'formula', note: 'hi', source: 'nara', externalId: 'k1' }), HH, NOW)).toBeNull();
     expect(validateEntry(breast(id(2)), HH, NOW)).toBeNull();
     expect(validateEntry({ ...base, id: id(3), kind: 'member', name: 'Karyn' }, HH, NOW)).toBeNull();
+    expect(validateEntry({ ...base, id: HH, kind: 'household', babyName: 'Josephine' }, HH, NOW)).toBeNull();
+    expect(validateEntry({ ...base, id: HH, kind: 'household', babyName: '' }, HH, NOW)).toBeNull(); // cleared
+  });
+
+  it('household record: id must be the householdId, babyName a string ≤60', () => {
+    const hhRec = { ...base, id: HH, kind: 'household', babyName: 'Jo' };
+    expect(validateEntry({ ...hhRec, id: id(4) }, HH, NOW)).toBe('household id mismatch');
+    expect(validateEntry({ ...hhRec, babyName: 'x'.repeat(LIMITS.maxName + 1) }, HH, NOW)).toBe('bad babyName');
+    expect(validateEntry({ ...hhRec, babyName: undefined }, HH, NOW)).toBe('bad babyName');
+    const { h } = hh();
+    const r = h.sync(HH, { changes: [hhRec] }, NOW);
+    expect(r.status === 200 && r.body.changes).toEqual([hhRec]);
+    expect(h.members()).toEqual([]);
   });
 
   it.each([

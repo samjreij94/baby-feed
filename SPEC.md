@@ -49,9 +49,23 @@ interface BottleFeed extends EntryBase {
   kind: 'bottle'; at: number; amountOz: number /* >0, 0.25 steps, ≤20 */; milk?: 'breast' | 'formula'; note?: string;
 }
 interface MemberEntry extends EntryBase { kind: 'member'; name: string } // id = member id; renames sync
+interface HouseholdEntry extends EntryBase { kind: 'household'; babyName: string } // (added) id = householdId
 type Feed = BreastFeed | BottleFeed;
-type Entry = Feed | MemberEntry;
+type Entry = Feed | MemberEntry | HouseholdEntry;
 ```
+
+### Household profile / baby name *(added)*
+One `HouseholdEntry` per household, `id === householdId` (32 hex, can't collide with a UUID), synced with the same
+LWW + outbox as every entry, so a rename on either phone reaches the other within a poll.
+- `useHousehold().babyName: string` ('' = not set) and `setBabyName(name)` — **any member** can call it. Trimmed,
+  ≤60 chars. `''`/whitespace **clears** it; the clear is a normal newer version, so it syncs and a later rename
+  still wins (nothing gets stuck).
+- Before a household exists the name is kept on the device (`meta.babyName`) and shown. `createHousehold` uploads
+  it. `joinHousehold` pulls first: the household's name wins; the joining phone's pending name is uploaded only
+  if the household has none. `leave()` keeps the last name locally.
+- Server: validated as `kind 'household'`, `id === householdId`, `babyName` string 0–60. Stored as an ordinary
+  entry row (no schema change). **The deployed Worker must be redeployed** before phones can sync it (the old
+  build rejects the kind as `bad kind`; the rest of a batch still applies).
 
 ### Members
 A device picks its member at setup (`setMe(name)`, or the `myName` arg of create/join). Members are synced
@@ -69,8 +83,9 @@ like any other entry (the other phone sees it within one poll, ~4 s).
 | `switchSide()` | paused | resume on the **other** side |
 | `pause()` | running | close the open segment, `pausedAt = now`, status paused |
 | `resume()` | paused | open a new segment on the **same** side as the last one |
-| `end()` | running | close the open segment, `endedAt = now` |
+| `end()` | running | close the open segment, `endedAt = now` (never before the open segment's start) |
 | `end()` | paused | `endedAt = pausedAt` (the feed really stopped at the pause) |
+| `end(id)` *(added)* | running/paused feed `id` | same transition for that feed (e.g. the other phone's feed in `others`); null if no such unended feed |
 | `discard()` | running/paused | tombstone the feed (started by mistake) |
 
 Per-side minutes = sum of segment durations per side (open segment counted to now). **Nursing time** = L + R
@@ -90,14 +105,32 @@ active one; others are in `useActiveFeed().others` so the UI can offer to end/di
 `nextSide = opposite(lastSide)`, null when there is no breast feed yet. Deliberately simple: no "short feed →
 same side" heuristic in v1 (open question).
 
-### 3.3 Metrics (`computeMetrics(feeds, rangeDays, now)` — pure, device local time)
-- Range = today + the previous `rangeDays − 1` local calendar days (7/14/30). DST-safe.
+### 3.3 Metrics (`computeMetrics(feeds, range, now, opts?)` / `useMetrics(range, opts?)` — pure, device local time)
+Device local time = JS `Date` local methods (no explicit timezone; the phones are America/Chicago; tests pin TZ).
+- `range: MetricsRange`:
+  - `number` or `{ days }` — today + the previous `n − 1` local calendar days (original form, 7/14/30). DST-safe.
+  - `{ from, to? }` — feeds with `from ≤ start < to`; `to` defaults to the end of today. Days = every local
+    calendar day touched by `[from, to)`.
+  - `'all'` — first live feed's local day through today (no feeds → no days, zero averages).
+- `opts.bucket: 'day' | 'week' | 'month'` (default `'day'`) groups `days` into `buckets`. Weeks start **Monday
+  00:00 local**; months are calendar months.
+- `opts.maxGapMinutes` — gaps longer than this are excluded from `avgGapMinutes` (headline and per bucket). The UI
+  passes 720 (12 h) so overnight / logging holes don't inflate it. **Omitted = every gap counts** (original rule).
 - **A feed is attributed entirely to the local day it started on** (a 23:50–00:10 feed counts 20 min on the start day).
 - Per day: `breastMinutes`, `minutesBySide {L,R}` (minutes, 0.1 precision), `feeds` (breast + bottle),
   `breastFeeds`, `bottleFeeds`, `bottleOz`, `bottleOzByMilk {breast, formula, unspecified}`.
-- `totals`, `perDayAvg` (totals ÷ rangeDays, empty days included).
-- `avgGapMinutes`: mean start-to-start gap between consecutive feeds (breast + bottle) in range; null if < 2.
+- `totals`, `perDayAvg` (totals ÷ rangeDays, empty days included), `rangeDays = days.length`, `from`/`to`
+  (first local midnight / exclusive end).
+- `avgGapMinutes`: mean start-to-start gap between consecutive feeds (breast + bottle) that both start in range,
+  gaps > `maxGapMinutes` dropped when set; null if no counted gap.
 - `avgFeedMinutes`: mean nursing minutes of **ended** breast feeds in range; null if none.
+- `firstFeedAt` *(added)*: start of the earliest live feed overall (not range-limited); null if none.
+- `bucket`, `maxGapMinutes` (echo; null = uncapped) and `buckets` *(added)*, oldest → newest, each:
+  `{ kind, start, end, key, label, days, fullDays, partial, totals, perDayAvg: {breastMinutes, minutesBySide,
+  feeds, bottleOz}, avgGapMinutes }`. `days` = days of the bucket inside the range (the divisor), `partial` =
+  `days < fullDays` (never for 'day'). Bucket gaps are tagged with the LATER feed's start (its predecessor may be
+  before the range). Labels: `Thu, Oct 8` / `Week of Oct 5` / `October 2026` (year added to day/week labels
+  when the range spans years).
 - Running/paused feeds count in feeds/gaps and their open segment counts up to `now`; excluded from `avgFeedMinutes`.
 
 ## 4. Household + invite
@@ -170,7 +203,8 @@ on `/workspace/poker-coach/server`:
   `server/src/index.ts` (Worker + `HouseholdDO` with a SQLite `HouseholdStorage`; RPC methods create/join/sync).
 - Validation per entry: id `[A-Za-z0-9-]{8,64}`, matching householdId, finite timestamps, `updatedAt` ≤ server
   now + 24 h, loggedBy/deviceId strings, note ≤1000, source/externalId, kind-specific checks (segments
-  consistent with status, amountOz 0.25 steps ≤20, milk enum, member name ≤60), ≤8 KB serialized. Invalid
+  consistent with status, amountOz 0.25 steps ≤20, milk enum, member name ≤60, household record id =
+  householdId and babyName 0–60), ≤8 KB serialized. Invalid
   entries are returned in `rejected` (the rest of the batch is applied). Body ≤256 KB (413), ≤500 changes (413).
 - No secrets in logs.
 
@@ -192,6 +226,9 @@ on `/workspace/poker-coach/server`:
 - Exports: `createMemoryStorage`, `createIdbStorage`, `NetworkError`, `HttpError`, types `ImportResult`,
   `NaraImportHook`, `NaraImportPreview`, `NaraImportStatus`.
 - `JoinHouseholdResponse.members`.
+- `useHousehold().babyName` / `setBabyName(name)`; `snapshot.babyName`; `FeedCore.setBabyName()` (§1).
+- `useActiveFeed().end(id?)` / `FeedCore.end(id?)` (§2).
+- `computeMetrics`/`useMetrics` range + options, `startOfLocalWeek`, `startOfLocalMonth` (§3.3).
 
 ## 9. Nara import
 Pure parser `src/core/import/nara.ts` (separate module, lazy-loaded): `parseNaraCsv(text, {me, members,
