@@ -11,7 +11,7 @@ import { SettingsScreen } from './screens/SettingsScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { TimerScreen } from './screens/TimerScreen';
 import { IconDrop } from './components/Icons';
-import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useHouseholdVM, useReady } from './ui/adapter';
+import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useBabyNameMigration, useHouseholdVM, useReady } from './ui/adapter';
 import { fmtClock } from './ui/format';
 import { usePrefs } from './ui/prefs';
 import { useTheme } from './ui/theme';
@@ -37,7 +37,9 @@ export default function App() {
   const [prefs, setPrefs] = usePrefs();
   const night = useTheme(prefs.night);
   const [hh] = useHouseholdVM();
+  useBabyNameMigration();
   const ready = useReady();
+  const [focusBaby, setFocusBaby] = useState(false);
   const [settingsView, setSettingsView] = useState<'main' | 'import'>(() => (new URLSearchParams(location.search).get('tab') === 'import' ? 'import' : 'main'));
   const [setup, setSetup] = useState(() => hh.status === 'none' || !hh.me || readJoinFromUrl() !== null);
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -87,6 +89,7 @@ export default function App() {
           {tab === 'home' && (
             <HomeScreen
               units={prefs.units}
+              onAddName={() => { setSettingsView('main'); setFocusBaby(true); setTab('settings'); }}
               night={night}
               active={active}
               onToggleNight={toggleNight}
@@ -105,9 +108,9 @@ export default function App() {
             />
           )}
           {tab === 'charts' && <ChartsScreen units={prefs.units} />}
-          {tab === 'settings' && settingsView === 'main' && <SettingsScreen prefs={prefs} night={night} onPrefs={setPrefs} onLeft={() => setSetup(true)} onImport={() => setSettingsView('import')} />}
+          {tab === 'settings' && settingsView === 'main' && <SettingsScreen prefs={prefs} night={night} onPrefs={setPrefs} onLeft={() => setSetup(true)} onImport={() => setSettingsView('import')} focusBaby={focusBaby} />}
           {tab === 'settings' && settingsView === 'import' && <NaraImportScreen onBack={() => setSettingsView('main')} onViewHistory={() => { setSettingsView('main'); setTab('history'); }} />}
-          <TabBar tab={tab} onChange={(t) => { setSettingsView('main'); setTab(t); }} />
+          <TabBar tab={tab} onChange={(t) => { setSettingsView('main'); setFocusBaby(false); setTab(t); }} />
         </>
       )}
 

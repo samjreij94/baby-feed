@@ -1,25 +1,65 @@
+import { useLayoutEffect, useRef } from 'react';
 import { PersonTag } from '../components/PersonChip';
 import { IconBottle, IconMoon, IconSun } from '../components/Icons';
 import { useClock, useHomeVM } from '../ui/adapter';
 import { fmtAgo, fmtAmount, fmtClock, fmtMinShort, fmtTime } from '../ui/format';
 import { SIDE_NAME, type ActiveFeedVM, type Side, type Units } from '../ui/types';
 
-export function HomeScreen({ units, night, active, onToggleNight, onStart, onBottle, onOpenTimer }: {
+/**
+ * Keeps everything above the fixed Left/Right/Bottle area visible at rest:
+ *  - --thumb-h is the MEASURED height of the fixed action area (so the scroll padding below the content is exact);
+ *  - if the content would still run under that area at scroll-top (short phones, big insets), `home-compact`
+ *    tightens the hero and drops the Last/Next side tiles (the SUGGESTED tag on the side buttons carries that).
+ * Class + style are set on the DOM node directly (no React state) so measuring can't loop renders.
+ */
+function useHomeFit(deps: unknown[]) {
+  const root = useRef<HTMLDivElement>(null);
+  const thumb = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const el = root.current, tz = thumb.current, last = content.current;
+    if (!el || !tz || !last) return;
+    let frame = 0;
+    const fit = () => {
+      el.style.setProperty('--thumb-h', `${Math.ceil(tz.getBoundingClientRect().height)}px`);
+      el.classList.remove('home-compact');
+      const overlaps = () => last.getBoundingClientRect().bottom + window.scrollY > tz.getBoundingClientRect().top - 8;
+      if (overlaps()) el.classList.add('home-compact');
+    };
+    fit();
+    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fit); };
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    ro?.observe(tz);
+    window.addEventListener('resize', schedule);
+    return () => { cancelAnimationFrame(frame); ro?.disconnect(); window.removeEventListener('resize', schedule); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return { root, thumb, content };
+}
+
+export function HomeScreen({ units, night, active, onToggleNight, onStart, onBottle, onOpenTimer, onAddName }: {
   units: Units; night: boolean; active: ActiveFeedVM | null;
-  onToggleNight: () => void; onStart: (s: Side) => void; onBottle: () => void; onOpenTimer: () => void;
+  onToggleNight: () => void; onStart: (s: Side) => void; onBottle: () => void; onOpenTimer: () => void; onAddName?: () => void;
 }) {
   const vm = useHomeVM(units);
   const now = useClock(30_000);
   const summary = vm.lastSummary;
   const ago = vm.sinceMs !== null ? fmtAgo(vm.sinceMs) : null;
   const dateLine = new Date(now).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  const fit = useHomeFit([!!active, vm.hasFeeds, vm.babyName]);
 
   return (
-    <div className="screen home" data-testid="home">
+    <div className="screen home" data-testid="home" ref={fit.root}>
       <header className="top">
         <div>
           <div className="eyebrow">{dateLine}</div>
-          <h1>{vm.babyName ?? 'Feeds'}</h1>
+          {vm.babyName ? <h1>{vm.babyName}</h1> : (
+            // No name set for the household yet (it syncs once either phone adds one): say "Baby" and offer to add it.
+            <div className="name-row">
+              <h1>Baby</h1>
+              {onAddName && <button type="button" className="btn btn-quiet btn-sm name-add" onClick={onAddName}>Add name</button>}
+            </div>
+          )}
         </div>
         <button type="button" className="icon-btn" onClick={onToggleNight} aria-label={night ? 'Switch to day colours' : 'Switch to night colours'}>
           {night ? <IconSun /> : <IconMoon />}
@@ -60,13 +100,13 @@ export function HomeScreen({ units, night, active, onToggleNight, onStart, onBot
         </section>
       )}
 
-      <section className="today" aria-label="Today so far">
+      <section className="today" aria-label="Today so far" ref={fit.content}>
         <div><b className="num">{vm.today.feeds}</b><span>{vm.today.feeds === 1 ? 'feed' : 'feeds'} today</span></div>
         <div><b className="num">{fmtMinShort(vm.today.nursingMin)}</b><span>nursing</span></div>
         <div><b className="num">{fmtAmount(vm.today.bottleOz, units)}</b><span>bottle</span></div>
       </section>
 
-      <div className="thumb-zone">
+      <div className="thumb-zone" ref={fit.thumb}>
         {active ? (
           <button type="button" className="btn btn-primary btn-xl" onClick={onOpenTimer} data-testid="open-timer">
             Back to timer · <span className="num">{fmtClock(active.elapsedMs)}</span>

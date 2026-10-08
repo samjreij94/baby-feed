@@ -450,3 +450,38 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .chart-cap { margin: -2px 0 4px; }
 .chart rect.partial { opacity: .5; }
 .chart circle.partial { opacity: .55; }
+
+/* ---------- QC fixes ---------- */
+/* Stepper: inert layer behind caption + row so taps in the gaps don't touch-adjust onto − / + (see Stepper.tsx). */
+.stepper-field { position: relative; isolation: isolate; }
+.stepper-field > .tap-shield { position: absolute; inset: -6px -4px; z-index: -1; }
+/* Typing target: the value box; the input itself is at least 48px wide and 48px+ tall. */
+.step-value { cursor: text; }
+.step-value input { min-width: 48px; }
+.stack-lg > .field-note { margin-top: 6px; }
+
+/* Home: no baby name on this phone yet */
+.name-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.name-add { min-height: 44px; padding: 0 10px; font-size: 15px; }
+
+/* Home fit (useHomeFit): exact clearance under the content for the measured fixed action area */
+.home { padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + var(--thumb-h) + 12px); }
+.home-compact .hero { padding: 14px 16px 12px; }
+.home-compact .hero-value { font-size: 40px; margin: 2px 0 4px; }
+.home-compact .hero-sides { display: none; }
+.home-compact .top { min-height: 48px; margin-bottom: 6px; }
+.home-compact .today { margin-top: 10px; }
+.home-compact .today > div { padding: 8px 12px; }
+.home-compact .today b { font-size: 18px; }
+
+/* Tap targets ≥ 48px for segmented controls; ≥ 44px for small disclosure rows */
+.segmented button { min-height: 48px; }
+.nara-warn summary { min-height: 44px; }
+
+/* SUGGESTED tag: ≥ 4.5:1 (day 5.8:1 on the deep side inks; night 5.7:1 / 6.0:1) */
+.side-btn-L .sug-tag { background: var(--L-ink); color: var(--on-accent); }
+.side-btn-R .sug-tag { background: var(--R-ink); color: var(--on-accent); }
+[data-theme='night'] .side-btn-L .sug-tag { background: var(--L); color: var(--on-accent); }
+[data-theme='night'] .side-btn-R .sug-tag { background: #c4836a; color: var(--on-accent); }
+.stepper { grid-template-columns: 64px 10px 1fr 10px 64px; gap: 0; }
+.step-gap { align-self: stretch; }

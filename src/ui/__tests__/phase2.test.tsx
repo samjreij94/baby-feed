@@ -130,3 +130,17 @@ describe('Import from Nara (Settings)', () => {
     expect(screen.getAllByText(/3 oz/).length).toBeGreaterThan(0);
   });
 });
+
+describe('baby name fallback (household has no name yet)', () => {
+  it('a phone without a local name shows "Baby" with an Add name shortcut to Settings', async () => {
+    const { core } = testCore();
+    await core.createHousehold('Karyn');
+    renderApp(core);
+    expect(await screen.findByRole('heading', { name: 'Baby' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Feeds' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add name' }));
+    const field = await screen.findByRole('textbox', { name: 'Baby’s name' });
+    expect(field).toHaveFocus();
+    expect(screen.getByText('Shared with both phones.')).toBeInTheDocument();
+  });
+});

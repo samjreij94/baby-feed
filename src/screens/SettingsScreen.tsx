@@ -10,20 +10,20 @@ import type { NightPref, Prefs } from '../ui/types';
 const NIGHT_OPTS = [{ value: 'auto', label: 'Auto' }, { value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] as const;
 
 /** Text field that saves on blur / Enter. Caption is a <div>. */
-function SaveField({ caption, value, placeholder, onSave }: { caption: string; value: string; placeholder?: string; onSave: (v: string) => void }) {
+function SaveField({ caption, value, placeholder, autoFocus, onSave }: { caption: string; value: string; placeholder?: string; autoFocus?: boolean; onSave: (v: string) => void }) {
   const id = useId();
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
   return (
     <div className="field">
       <div className="caption" id={id}>{caption}</div>
-      <input className="input" aria-labelledby={id} value={v} placeholder={placeholder} maxLength={24}
+      <input className="input" aria-labelledby={id} value={v} placeholder={placeholder} maxLength={24} autoFocus={autoFocus}
         onChange={(e) => setV(e.target.value)} onBlur={() => v.trim() !== value && onSave(v.trim())} onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
     </div>
   );
 }
 
-export function SettingsScreen({ prefs, night, onPrefs, onLeft, onImport }: { prefs: Prefs; night: boolean; onPrefs: (p: Partial<Prefs>) => void; onLeft: () => void; onImport: () => void }) {
+export function SettingsScreen({ prefs, night, onPrefs, onLeft, onImport, focusBaby = false }: { prefs: Prefs; night: boolean; onPrefs: (p: Partial<Prefs>) => void; onLeft: () => void; onImport: () => void; focusBaby?: boolean }) {
   const [hh, act] = useHouseholdVM();
   const sync = useSyncVM();
   const [leave, setLeave] = useState(false);
@@ -34,7 +34,8 @@ export function SettingsScreen({ prefs, night, onPrefs, onLeft, onImport }: { pr
       <h2 className="section">You</h2>
       <div className="card stack-lg">
         <SaveField caption="Your name" value={hh.me?.name ?? ''} onSave={(n) => n && void act.setMyName(n)} />
-        <SaveField caption="Baby’s name" value={hh.babyName ?? ''} placeholder="Optional" onSave={(n) => void act.setBabyName(n || null)} />
+        <SaveField caption="Baby’s name" value={hh.babyName ?? ''} placeholder="Add a name" autoFocus={focusBaby && !hh.babyName} onSave={(n) => void act.setBabyName(n || null)} />
+        <div className="dim small field-note">Shared with both phones.</div>
       </div>
 
       <h2 className="section">Night mode</h2>

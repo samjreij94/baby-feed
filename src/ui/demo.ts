@@ -14,7 +14,7 @@ import { FeedCore, type BreastFeed, type Entry, type Feed, type Member, type Sid
 import { handleRequest, type AppDeps } from '../../server/src/app.ts';
 import { Household, householdApi, type HouseholdMeta, type HouseholdStorage } from '../../server/src/logic.ts';
 
-import { DEMO_BABY, loadBabyName, saveBabyName } from './prefs';
+import { DEMO_BABY, clearLegacyBabyName } from './prefs';
 
 const MIN = 60_000;
 export const DEMO_API = 'https://demo-sync.invalid';
@@ -193,12 +193,13 @@ export async function bootDemoCore(): Promise<FeedCore> {
   if (demo.includes('reset')) {
     await deleteDb(dbName());
     for (const k of Object.keys(localStorage)) if (k.startsWith('bf.demo.') || k.startsWith('baby-feed-demo')) localStorage.removeItem(k);
+    clearLegacyBabyName();
   }
-  // Demo default baby (only when this device hasn't named one).
-  if (!demo.includes('fresh') && !loadBabyName()) saveBabyName(DEMO_BABY.name);
   const server = createDemoServer();
   const core = new FeedCore({ fetch: server.fetch, apiBaseUrl: DEMO_API, dbName: dbName(), mirrorKey: mirrorKey() });
   await core.ready;
+  // Demo default baby (only when this device hasn't named one); core keeps it and uploads it on create.
+  if (!demo.includes('fresh') && !core.getSnapshot().babyName) await core.setBabyName(DEMO_BABY.name);
   let busy = false;
   const onChange = async () => {
     if (busy || !core.householdId || !core.getSnapshot().me) return;

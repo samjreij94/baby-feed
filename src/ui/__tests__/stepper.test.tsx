@@ -28,6 +28,39 @@ describe('Stepper (gym-app label-tap regression)', () => {
     expect(screen.getByRole('textbox', { name: 'Amount' })).toHaveValue('3');
   });
 
+  it('a tap in the gap next to − / + (or on the inert shield) leaves the value unchanged', () => {
+    render(<Harness />);
+    const gaps = screen.getAllByTestId('stepper-gap');
+    expect(gaps).toHaveLength(2);
+    const [minus, plus] = [screen.getByRole('button', { name: 'Decrease Amount' }), screen.getByRole('button', { name: 'Increase Amount' })];
+    // the gaps are their own grid cells beside the buttons, never wrapping them
+    expect(gaps[0]!.previousElementSibling).toBe(minus);
+    expect(gaps[1]!.nextElementSibling).toBe(plus);
+    for (const g of [...gaps, screen.getByTestId('stepper-shield'), screen.getByRole('group', { name: 'Amount' })]) {
+      fireEvent.pointerDown(g);
+      fireEvent.mouseDown(g);
+      fireEvent.pointerUp(g);
+      fireEvent.mouseUp(g);
+      fireEvent.click(g);
+      fireEvent.touchStart(g);
+      fireEvent.touchEnd(g);
+    }
+    expect(screen.getByTestId('val')).toHaveTextContent('3');
+    // and the buttons themselves still step
+    fireEvent.click(plus);
+    expect(screen.getByTestId('val')).toHaveTextContent('3.25');
+  });
+
+  it('the value box is a ≥48px typing target: tapping it focuses the input without changing the value', () => {
+    const css = readFileSync(`${process.cwd()}/src/ui/styles/app.css`, 'utf8');
+    expect(css).toMatch(/\.step-value input \{ min-width: 48px; \}/);
+    render(<Harness />);
+    const input = screen.getByRole('textbox', { name: 'Amount' });
+    fireEvent.click(input.parentElement!);
+    expect(input).toHaveFocus();
+    expect(screen.getByTestId('val')).toHaveTextContent('3');
+  });
+
   it('renders no <label> element anywhere in the stepper', () => {
     const { container } = render(<Harness />);
     expect(container.querySelectorAll('label')).toHaveLength(0);

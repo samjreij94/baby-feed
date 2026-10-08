@@ -3,7 +3,7 @@
  * onto the UI view-models in ./types. No business logic here — shape mapping and display formatting only.
  * Signatures match src/core/index.ts + hooks.ts (Dealer's core). The only UI module that imports src/core.
  */
-import { createElement, useMemo, type ReactNode } from 'react';
+import { createElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActiveFeedExistsError,
   computeMetrics,
@@ -35,7 +35,7 @@ import {
 import { dateKey, dayOfMonth, fmtAmount, fmtMin, fmtMinShort, initials, longDayLabel, weekdayInitial } from './format';
 import { groupHistory } from './history';
 import { MAX_GAP_MIN, rangeDayCount, summarizeAllTime } from './metrics';
-import { useBabyName } from './prefs';
+import { clearLegacyBabyName, loadLegacyBabyName } from './prefs';
 import { MILK_NAME, SIDE_NAME, type NaraVM, type ActiveFeedVM, type ChartDayVM, type ChartRange, type ChartsVM, type EntryDraft, type HistoryDayVM, type HistoryEntryVM, type HomeVM, type HouseholdVM, type PersonVM, type RangeDays, type Side, type SyncVM, type Units } from './types';
 
 const MIN = 60_000;
@@ -177,10 +177,50 @@ export const useReady = (): boolean => useCoreReady();
 /** Core-clock now (device clock + server offset), re-rendering every intervalMs. */
 export const useClock = (intervalMs: number): number => useNow(intervalMs);
 
+/*
+ * Baby name = core's synced household name (both phones read it; '' = not set). Until the one-time migration below
+ * has run, the old device-local name is shown as a fallback.
+ */
+function useBabyName(): string | null {
+  const h = useHousehold();
+  const [legacy] = useState(loadLegacyBabyName);
+  return h.babyName.trim() || (legacy && loadLegacyBabyName()) || null;
+}
+
+/**
+ * One-time hand-over of the old device-local baby name to core. Waits for core to load and, in a household, for a
+ * sync in this session (so a name the other phone already set is pulled first and wins). Core empty -> upload ours;
+ * either way the local copy is then dropped. Mount once (App).
+ */
+export function useBabyNameMigration() {
+  const h = useHousehold();
+  const ready = useCoreReady();
+  const sync = useSync();
+  const syncedAtMount = useRef(sync.lastSyncedAt);
+  const done = useRef(false);
+  const synced = sync.lastSyncedAt !== null && sync.lastSyncedAt !== syncedAtMount.current;
+  const canDecide = ready && (h.status === 'none' || (synced && !!h.me));
+  useEffect(() => {
+    if (done.current || !canDecide) return;
+    const legacy = loadLegacyBabyName();
+    done.current = true;
+    if (!legacy) return;
+    void (async () => {
+      try {
+        if (!h.babyName.trim()) await h.setBabyName(legacy);
+        clearLegacyBabyName();
+      } catch (e) {
+        done.current = false; // keep the local copy; try again on the next render
+        console.warn('[ui] baby name migration', e);
+      }
+    })();
+  }, [canDecide, h]);
+}
+
 export function useHouseholdVM() {
   const h = useHousehold();
   const blocked = useBlocked();
-  const [babyName, setBabyName] = useBabyName();
+  const babyName = useBabyName();
   const meId = h.me?.id ?? null;
   const vm: HouseholdVM = {
     status: h.status,
@@ -191,11 +231,12 @@ export function useHouseholdVM() {
     babyName,
   };
   const actions = gateActions(blocked, {
-    create: async (myName: string, baby: string | null) => { await friendly(h.createHousehold(myName.trim())); setBabyName(baby); },
+    // Core keeps a name set before the household exists and uploads it on create (on join only if the household has none).
+    create: async (myName: string, baby: string | null) => { if (baby?.trim()) await h.setBabyName(baby); await friendly(h.createHousehold(myName.trim())); },
     // Core's own messages ('That invite code is not valid' / 'Invite code not recognised') are shown inline as-is.
-    join: async (code: string, myName: string, baby: string | null) => { await friendly(h.joinHousehold(code.trim(), myName.trim())); if (baby) setBabyName(baby); },
+    join: async (code: string, myName: string, baby: string | null) => { if (baby?.trim()) await h.setBabyName(baby); await friendly(h.joinHousehold(code.trim(), myName.trim())); },
     setMyName: (n: string) => h.setMe(n.trim()).then(() => undefined),
-    setBabyName: async (n: string | null) => setBabyName(n),
+    setBabyName: async (n: string | null) => { await h.setBabyName(n?.trim() ?? ''); clearLegacyBabyName(); },
     leave: () => h.leave(),
   });
   return [vm, actions] as const;
@@ -214,7 +255,7 @@ export function useHomeVM(units: Units): HomeVM {
   const last = useLastFeed();
   const h = useHousehold();
   const m = useMetrics(7);
-  const [babyName] = useBabyName();
+  const babyName = useBabyName();
   const f = last.feed;
   const today = m.days[m.days.length - 1];
   let lastSummary: string | null = null;
