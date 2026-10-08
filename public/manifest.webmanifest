@@ -1,0 +1,13 @@
+{
+  "name": "Baby Feed",
+  "short_name": "Feeds",
+  "description": "Baby feeding tracker",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": []
+}
