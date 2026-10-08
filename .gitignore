@@ -5,3 +5,8 @@ dist
 .env
 .env.*
 coverage
+
+# Private data exports (e.g. a Nara Baby CSV) never go in the repo.
+# Test fixtures are inline strings; if a fixture file is ever needed, put it under a __tests__/fixtures/ dir.
+*.csv
+!**/__tests__/fixtures/*.csv
