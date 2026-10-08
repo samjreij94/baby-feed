@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeMetrics } from '../../core/metrics';
 import type { BottleFeed, BreastFeed, Feed } from '../../core/types';
-import { buildChartsVM, dailyGaps } from '../adapter';
+import { buildChartsVM, chartMetricsOptions } from '../adapter';
 import { niceMax, niceMinutes } from '../../components/Charts';
 
 const MIN = 60_000;
@@ -22,9 +22,13 @@ const feeds: Feed[] = [
 ];
 
 describe('chart view-models', () => {
-  const m = computeMetrics(feeds, 7, NOW);
-  const starts = feeds.map((f) => (f.kind === 'breast' ? f.startedAt : f.at));
-  const vm = buildChartsVM(m, starts, 7);
+  const opts = chartMetricsOptions('day');
+  const m = computeMetrics(feeds, 7, NOW, opts);
+  const vm = buildChartsVM(m, 7);
+  const dayGap = (starts: number[], t: number) => {
+    const fs = starts.map((x) => bottle(x, 1));
+    return computeMetrics(fs, 1, t, opts).buckets.at(-1)!.avgGapMinutes;
+  };
 
   it('one bar per day, oldest → newest, today last', () => {
     expect(vm.days).toHaveLength(7);
@@ -49,21 +53,25 @@ describe('chart view-models', () => {
   it('averages per day and average gap', () => {
     expect(vm.avg.feedsPerDay).toBe(0.7); // 5 / 7
     expect(vm.avg.bottleOzPerDay).toBe(0.4);
-    expect(vm.avg.gapMin).toBe(m.avgGapMinutes);
+    // one gap rule for every range: core with maxGapMinutes 720 → the 20h hole (yesterday 05:00 → today 01:00) is
+    // left out: (180 + 180 + 180) / 3. Uncapped (the old 7/14/30 rule) it was 29h / 4 = 435.
+    expect(m.maxGapMinutes).toBe(720);
+    expect(vm.avg.gapMin).toBe(180);
+    expect(computeMetrics(feeds, 7, NOW).avgGapMinutes).toBe(435);
     expect(vm.hasData).toBe(true);
   });
 
   it('daily average gap: attributed to the later feed’s day; > 12h logging holes ignored; null with no gaps', () => {
     expect(vm.days.at(-1)!.avgGapMin).toBe(180); // 20h hole (yesterday 05:00 → today 01:00) ignored
     expect(vm.days.at(-2)!.avgGapMin).toBe(180); // 8-day hole from the old feed ignored
-    expect(dailyGaps([at(-1, 22), at(0, 1)], ['2026-10-08']).get('2026-10-08')).toBe(180); // overnight gap counts for the later day
+    expect(dayGap([at(-1, 22), at(0, 1)], NOW)).toBe(180); // overnight gap counts for the later day
     expect(vm.days[0]!.avgGapMin).toBeNull();
-    const g = dailyGaps([at(0, 1), at(0, 3)], ['2026-10-08']);
-    expect(g.get('2026-10-08')).toBe(120);
+    expect(dayGap([at(0, 1), at(0, 3)], NOW)).toBe(120);
+    expect(dayGap([at(-1, 12), at(0, 1)], NOW)).toBeNull(); // 13h > 12h
   });
 
   it('empty range → hasData false, split 0/0', () => {
-    const e = buildChartsVM(computeMetrics([], 14, NOW), [], 14);
+    const e = buildChartsVM(computeMetrics([], 14, NOW, opts), 14);
     expect(e.hasData).toBe(false);
     expect(e.split).toMatchObject({ L: 0, R: 0 });
     expect(e.days).toHaveLength(14);

@@ -6,9 +6,9 @@
   --surface-3: #e8ddd0;
   --border: #e7dccf;
   --text: #3b3129;
-  --text-dim: #76685a;
-  --accent: #5b8a7a;
-  --accent-press: #4d7a6b;
+  --text-dim: #6c5f51; /* ≥4.5:1 on every day surface incl. accent-soft / surface-2 */
+  --accent: #45705f; /* on-accent text 5.4:1; as text ≥4.6:1 on bg / surface / accent-soft */
+  --accent-press: #3a6052;
   --accent-soft: #e0ede7;
   --on-accent: #fffaf3;
   --L: #6f9e8f;
@@ -21,7 +21,7 @@
   --bottle-soft: #ece8f5;
   --bottle-ink: #5c4f8a;
   --feeds: #8ea37d;
-  --danger: #b4554b;
+  --danger: #9e463c; /* 5.0:1 on danger-soft */
   --danger-soft: #f7e3df;
   --warn-soft: #f8ecd5;
   --tone0-bg: #d9eae2; --tone0-fg: #2f5a4c;
@@ -57,7 +57,7 @@
   --surface-3: #35281b;
   --border: #36291d;
   --text: #d2bb9d;
-  --text-dim: #977f65;
+  --text-dim: #a89074; /* ≥4.7:1 on every night surface */
   --accent: #b9824a;
   --accent-press: #a5723f;
   --accent-soft: #33251a;
@@ -72,7 +72,7 @@
   --bottle-soft: #2f2126;
   --bottle-ink: #c99aab;
   --feeds: #97865c;
-  --danger: #c06a58;
+  --danger: #d6806c; /* 5.1:1 on danger-soft */
   --danger-soft: #3a211b;
   --warn-soft: #34281a;
   --tone0-bg: #35291b; --tone0-fg: #d4b585;
@@ -248,7 +248,7 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .timer-main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 16px 0; min-height: 220px; }
 .now-side { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 650; font-family: var(--round); }
 .clock { font-size: clamp(76px, 24vw, 104px); font-weight: 600; line-height: 1; margin: 14px 0 10px; letter-spacing: -.02em; }
-.is-paused .clock { opacity: .55; }
+.is-paused .clock { opacity: .7; } /* still reads as paused; 4.7:1 day / 5.5:1 night */
 .side-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .side-tile { border-radius: var(--radius-md); padding: 12px 16px; border: 2px solid transparent; background: var(--surface); }
 .side-tile-L.current { background: var(--L-soft); border-color: var(--L); }

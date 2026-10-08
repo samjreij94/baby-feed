@@ -2,10 +2,10 @@
 process.env.TZ = 'America/Chicago'; // week/DST assertions are local-time (US DST ends Sun Nov 1, 2026)
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CoreProvider, computeMetrics, FeedCore, type BottleFeed, type BreastFeed, type Feed } from '../../core';
+import { CoreProvider, computeMetrics, FeedCore, startOfLocalWeek, type BottleFeed, type BreastFeed, type Feed } from '../../core';
 import { ChartsScreen } from '../../screens/ChartsScreen';
-import { buildAllTimeChartsVM, buildChartsVM } from '../adapter';
-import { bucketDays, cappedGaps, chooseBucket, rangeDayCount, summarizeAllTime, weekCount, weekStart } from '../metrics';
+import { allTimeBucket, buildAllTimeChartsVM, buildChartsVM, chartMetricsOptions } from '../adapter';
+import { chooseBucket } from '../metrics';
 
 const MIN = 60_000;
 const T = (y: number, mo: number, d: number, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime();
@@ -16,49 +16,57 @@ const breast = (start: number, l: number, r: number): BreastFeed => ({
   segments: [...(l ? [{ side: 'L' as const, startedAt: start, endedAt: start + l * MIN }] : []), ...(r ? [{ side: 'R' as const, startedAt: start + l * MIN, endedAt: start + (l + r) * MIN }] : [])],
 });
 const bottle = (t: number, oz: number): BottleFeed => ({ ...base, id: `o${n++}`, createdAt: t, updatedAt: t, kind: 'bottle', at: t, amountOz: oz, milk: 'formula' });
-const start = (f: Feed) => (f.kind === 'breast' ? f.startedAt : f.at);
-/** core per-day metrics from the first feed's day through `now` (exactly what the adapter does). */
-const daysFor = (feeds: Feed[], now: number) => computeMetrics(feeds, rangeDayCount(Math.min(...feeds.map(start)), now), now).days;
+/** Core All-time metrics with a given bucket (what the adapter asks core for) and the charts VM built from them. */
+const allFor = (feeds: Feed[], now: number, bucket: 'day' | 'week' | 'month') => {
+  const m = computeMetrics(feeds, 'all', now, chartMetricsOptions(bucket));
+  return { m, bars: buildChartsVM(m, 'all').days };
+};
+const rangeDays = (first: number, now: number) => computeMetrics([bottle(first, 1)], 'all', now).rangeDays;
 
 describe('bucket choice by range length', () => {
   it('daily up to 31 days, then Mon-start weeks, months beyond 26 weeks', () => {
-    expect(chooseBucket(T(2026, 10, 8), T(2026, 10, 8))).toBe('day'); // 1 day
-    expect(chooseBucket(T(2026, 9, 8), T(2026, 10, 8))).toBe('day'); // 31 days
-    expect(chooseBucket(T(2026, 9, 7), T(2026, 10, 8))).toBe('week'); // 32 days
-    expect(weekCount(T(2026, 6, 15), T(2026, 12, 13))).toBe(26); // Mon Jun 15 … Sun Dec 13
-    expect(chooseBucket(T(2026, 6, 15), T(2026, 12, 13))).toBe('week');
-    expect(chooseBucket(T(2026, 6, 15), T(2026, 12, 14))).toBe('month'); // 27th week
-    expect(chooseBucket(T(2026, 6, 17), T(2026, 10, 8))).toBe('week'); // Josephine: 114 days, 17 weeks
+    expect(allTimeBucket(null, T(2026, 10, 8))).toBe('day');
+    expect(allTimeBucket(T(2026, 10, 8), T(2026, 10, 8, 12))).toBe('day'); // 1 day
+    expect(allTimeBucket(T(2026, 9, 8), T(2026, 10, 8, 12))).toBe('day'); // 31 days
+    expect(allTimeBucket(T(2026, 9, 7), T(2026, 10, 8, 12))).toBe('week'); // 32 days
+    expect(allTimeBucket(T(2026, 6, 15), T(2026, 12, 13, 12))).toBe('week'); // Mon Jun 15 … Sun Dec 13 = 26 weeks
+    expect(allTimeBucket(T(2026, 6, 15), T(2026, 12, 14, 12))).toBe('month'); // 27th week
+    expect(allTimeBucket(T(2026, 6, 17, 8), T(2026, 10, 8, 13))).toBe('week'); // Josephine: 114 days, 17 weeks
+    expect(chooseBucket(31, 5)).toBe('day');
+    expect(chooseBucket(32, 26)).toBe('week');
+    expect(chooseBucket(190, 27)).toBe('month');
   });
 
   it('range day count is inclusive and DST-proof', () => {
-    expect(rangeDayCount(null, T(2026, 10, 8))).toBe(0);
-    expect(rangeDayCount(T(2026, 10, 8, 3), T(2026, 10, 8, 23))).toBe(1);
-    expect(rangeDayCount(T(2026, 10, 31, 22), T(2026, 11, 2, 1))).toBe(3); // spans the 25h day (Nov 1)
-    expect(rangeDayCount(T(2026, 3, 7, 12), T(2026, 3, 9, 12))).toBe(3); // spans the 23h day (Mar 8)
-    expect(rangeDayCount(T(2026, 6, 17, 8), T(2026, 10, 8, 13))).toBe(114);
+    expect(computeMetrics([], 'all', T(2026, 10, 8)).rangeDays).toBe(0);
+    expect(rangeDays(T(2026, 10, 8, 3), T(2026, 10, 8, 23))).toBe(1);
+    expect(rangeDays(T(2026, 10, 31, 22), T(2026, 11, 2, 1))).toBe(3); // spans the 25h day (Nov 1)
+    expect(rangeDays(T(2026, 3, 7, 12), T(2026, 3, 9, 12))).toBe(3); // spans the 23h day (Mar 8)
+    expect(rangeDays(T(2026, 6, 17, 8), T(2026, 10, 8, 13))).toBe(114);
   });
 });
 
 describe('week boundaries across the DST change (Sun Nov 1, 2026)', () => {
   it('weeks start Monday 00:00 local on both sides of the change', () => {
-    expect(weekStart(T(2026, 11, 1, 12))).toBe(T(2026, 10, 26));
-    expect(weekStart(T(2026, 11, 1, 23, 59))).toBe(T(2026, 10, 26));
-    expect(weekStart(T(2026, 11, 2, 0, 30))).toBe(T(2026, 11, 2));
+    expect(startOfLocalWeek(T(2026, 11, 1, 12))).toBe(T(2026, 10, 26));
+    expect(startOfLocalWeek(T(2026, 11, 1, 23, 59))).toBe(T(2026, 10, 26));
+    expect(startOfLocalWeek(T(2026, 11, 2, 0, 30))).toBe(T(2026, 11, 2));
     expect(T(2026, 11, 2) - T(2026, 10, 26)).toBe(7 * 86_400_000 + 3_600_000); // the 169-hour week
   });
 
   it('feeds either side of midnight Sun→Mon land in the right week; partial edges flagged', () => {
     const now = T(2026, 11, 10, 12);
     const feeds = [breast(T(2026, 10, 20, 9), 10, 10), breast(T(2026, 11, 1, 23, 30), 6, 0), breast(T(2026, 11, 2, 0, 15), 0, 8), bottle(T(2026, 11, 10, 8), 4)];
-    const bars = bucketDays(daysFor(feeds, now), 'week', feeds.map(start));
-    expect(bars.map((b) => [b.key, b.days, b.partial])).toEqual([
+    const { m, bars } = allFor(feeds, now, 'week');
+    expect(m.buckets.map((b) => [b.key, b.days, b.partial])).toEqual([
       ['2026-10-19', 6, true], // Tue Oct 20 – Sun Oct 25
       ['2026-10-26', 7, false], // incl. Sun Nov 1 (25h)
       ['2026-11-02', 7, false],
       ['2026-11-09', 2, true], // Mon Nov 9 – today
     ]);
-    expect(bars[1]).toMatchObject({ tick: 'Oct 26', label: 'Week of Oct 26', leftMin: round1(6 / 7), feeds: round1(1 / 7) });
+    expect(bars.map((b) => b.partial)).toEqual([true, false, false, true]);
+    expect(bars[1]).toMatchObject({ tick: 'Oct 26', label: 'Week of Oct 26, daily average', leftMin: round1(6 / 7), feeds: round1(1 / 7) });
+    expect(bars[0]!.label).toBe('Week of Oct 19 (partial, 6 days), daily average');
     expect(bars[2]).toMatchObject({ rightMin: round1(8 / 7), feeds: round1(1 / 7), avgGapMin: 45 }); // 23:30 → 00:15 gap counts in the later week
     expect(bars[3]).toMatchObject({ bottleOz: 2, feeds: 0.5 });
   });
@@ -70,8 +78,8 @@ describe('month boundaries', () => {
   it('calendar months with honest partial first/last months', () => {
     const now = T(2026, 8, 3, 12);
     const feeds = [breast(T(2026, 6, 17, 8), 14, 14), breast(T(2026, 6, 30, 23, 50), 31, 0), breast(T(2026, 7, 1, 0, 5), 0, 31), bottle(T(2026, 8, 3, 9), 3)];
-    const bars = bucketDays(daysFor(feeds, now), 'month', feeds.map(start));
-    expect(bars.map((b) => [b.key, b.tick, b.label, b.days, b.fullDays, b.partial])).toEqual([
+    const { m, bars } = allFor(feeds, now, 'month');
+    expect(m.buckets.map((b, i) => [b.key, bars[i]!.tick, b.label, b.days, b.fullDays, b.partial])).toEqual([
       ['2026-06-01', 'Jun', 'June 2026', 14, 30, true], // Jun 17–30
       ['2026-07-01', 'Jul', 'July 2026', 31, 31, false],
       ['2026-08-01', 'Aug', 'August 2026', 3, 31, true],
@@ -119,15 +127,17 @@ describe('hand-computed averages (All-time view-model on the real core metrics)'
   });
 
   it('bar averages × days add back up to the range totals', () => {
-    const s = summarizeAllTime(daysFor(feeds, now), feeds.map(start));
-    expect(s.rangeDays).toBe(36);
-    const feedsBack = s.bars.reduce((a, b) => a + b.feeds * b.days, 0);
-    expect(feedsBack).toBeCloseTo(5, 5);
-    expect(s.totals).toEqual({ leftMin: 15, rightMin: 25, nursingMin: 40, feeds: 5, bottleOz: 6.5 });
+    const { m } = allFor(feeds, now, 'week');
+    expect(m.rangeDays).toBe(36);
+    const feedsBack = m.buckets.reduce((a, b) => a + b.totals.feeds, 0);
+    expect(feedsBack).toBe(5);
+    expect(m.buckets.reduce((a, b) => a + b.perDayAvg.feeds * b.days, 0)).toBeCloseTo(5, 0);
+    expect(m.totals).toMatchObject({ minutesBySide: { L: 15, R: 25 }, breastMinutes: 40, feeds: 5, bottleOz: 6.5 });
   });
 
   it('gap rule: start-to-start, gaps over 12h dropped', () => {
-    expect(cappedGaps([T(2026, 1, 1, 0), T(2026, 1, 1, 12), T(2026, 1, 2, 0, 1)]).map((g) => g.min)).toEqual([720]);
+    const vm2 = buildAllTimeChartsVM([bottle(T(2026, 1, 1, 0), 1), bottle(T(2026, 1, 1, 12), 1), bottle(T(2026, 1, 2, 0, 1), 1)], T(2026, 1, 2, 12));
+    expect(vm2.avg.gapMin).toBe(720); // 12h exactly counts, 12h01m doesn't
   });
 });
 
@@ -156,10 +166,10 @@ describe('edge cases', () => {
     expect(vm.avg.bottleOzPerDay).toBe(1.5);
   });
 
-  it('7/14/30 view-models are unchanged (daily bars from core metrics, no allTime block)', () => {
+  it('7/14/30 view-models: daily bars from core metrics, no allTime block', () => {
     const now = T(2026, 10, 8, 13);
     const feeds = [breast(T(2026, 10, 8, 1), 10, 5), breast(T(2026, 10, 8, 4), 0, 12)];
-    const vm = buildChartsVM(computeMetrics(feeds, 7, now), feeds.map(start), 7);
+    const vm = buildChartsVM(computeMetrics(feeds, 7, now, chartMetricsOptions('day')), 7);
     expect(vm.bucket).toBe('day');
     expect(vm.allTime).toBeUndefined();
     expect(vm.days).toHaveLength(7);
@@ -180,6 +190,7 @@ describe('Charts screen: All option', () => {
     const { unmount } = ui();
     expect(screen.getByRole('radio', { name: '7 days' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByTestId('all-time-note')).toBeNull();
+    expect(screen.getByText(/^Start to start · gaps over 12h left out · range average/)).toBeInTheDocument(); // one gap rule for every range
     await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'All' })); });
     expect(screen.getByTestId('all-time-note')).toHaveTextContent(/61 days/);
     expect(screen.getByTestId('all-time-note')).toHaveTextContent(/daily average for that week/);

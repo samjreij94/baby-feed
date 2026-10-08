@@ -11,6 +11,8 @@ import {
   parseInvite,
   readInviteFromLocation,
   sideMs,
+  startOfLocalDay,
+  startOfLocalWeek,
   CoreProvider,
   useActiveFeed,
   useCore,
@@ -24,22 +26,22 @@ import {
   useNow,
   useSync,
   type BreastFeed,
-  type BreastPatch,
   type FeedCore,
   type EntryPatch,
   type Feed,
   type Member,
   type Metrics,
+  type MetricsBucket,
+  type MetricsOptions,
   type Side as CoreSide,
 } from '../core';
-import { dateKey, dayOfMonth, fmtAmount, fmtMin, fmtMinShort, initials, longDayLabel, weekdayInitial } from './format';
+import { dayOfMonth, fmtAmount, fmtMin, fmtMinShort, initials, longDayLabel, weekdayInitial } from './format';
 import { groupHistory } from './history';
-import { MAX_GAP_MIN, rangeDayCount, summarizeAllTime } from './metrics';
+import { barTick, chooseBucket, MAX_GAP_MIN, type Bucket } from './metrics';
 import { clearLegacyBabyName, loadLegacyBabyName } from './prefs';
-import { MILK_NAME, SIDE_NAME, type NaraVM, type ActiveFeedVM, type ChartDayVM, type ChartRange, type ChartsVM, type EntryDraft, type HistoryDayVM, type HistoryEntryVM, type HomeVM, type HouseholdVM, type PersonVM, type RangeDays, type Side, type SyncVM, type Units } from './types';
+import { MILK_NAME, SIDE_NAME, type NaraVM, type ActiveFeedVM, type ChartDayVM, type ChartRange, type ChartsVM, type EntryDraft, type HistoryDayVM, type HistoryEntryVM, type HomeVM, type HouseholdVM, type PersonVM, type Side, type SyncVM, type Units } from './types';
 
 const MIN = 60_000;
-const feedStart = (f: Feed) => (f.kind === 'breast' ? f.startedAt : f.at);
 
 /* ---------- people ---------- */
 export function personVM(m: Member, meId: string | null, members: readonly Member[]): PersonVM {
@@ -95,43 +97,79 @@ export function draftToBreastSegments(d: Extract<EntryDraft, { kind: 'breast' }>
   return { segments: segs, endedAt: t };
 }
 
-/* ---------- charts ---------- */
-/** Gaps longer than this are "nothing was logged", not a feeding gap (defined in ./metrics, shared with All-time). */
+/* ---------- charts (numbers: core computeMetrics/useMetrics) ---------- */
+/** Gaps longer than this are "nothing was logged" / a long night, not a feeding gap (one rule for every range). */
 export { MAX_GAP_MIN };
-/** Mean minutes between consecutive feed starts, per local day (a gap belongs to the later feed's day). */
-export function dailyGaps(starts: readonly number[], dayKeys: readonly string[]): Map<string, number | null> {
-  const sorted = [...starts].sort((a, b) => a - b);
-  const acc = new Map<string, number[]>(dayKeys.map((k) => [k, []]));
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = (sorted[i]! - sorted[i - 1]!) / MIN;
-    if (gap <= MAX_GAP_MIN) acc.get(dateKey(sorted[i]!))?.push(gap);
-  }
-  return new Map([...acc].map(([k, v]) => [k, v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null]));
+/** Options for every chart range: core drops gaps > 12h from the headline and per-bar average gap. */
+export const chartMetricsOptions = (bucket: Bucket): MetricsOptions => ({ bucket, maxGapMinutes: MAX_GAP_MIN });
+
+const DAY_MS = 86_400_000;
+/** All-time bucket for a range from the first feed's day to `now` (≤31 days daily, ≤26 Mon-start weeks weekly, else monthly). */
+export function allTimeBucket(firstFeedAt: number | null, now: number): Bucket {
+  if (firstFeedAt === null) return 'day';
+  const first = startOfLocalDay(Math.min(firstFeedAt, now));
+  const days = Math.round((startOfLocalDay(now) - first) / DAY_MS) + 1; // round absorbs DST's 23h/25h days
+  const weeks = Math.round((startOfLocalWeek(now) - startOfLocalWeek(first)) / (7 * DAY_MS)) + 1;
+  return chooseBucket(days, weeks);
 }
 
-export function buildChartsVM(m: Metrics, feedStarts: readonly number[], range: RangeDays): ChartsVM {
-  const gaps = dailyGaps(feedStarts, m.days.map((d) => d.date));
-  const days: ChartDayVM[] = m.days.map((d) => ({
-    key: d.date,
-    tick: range === 7 ? weekdayInitial(d.date) : dayOfMonth(d.date),
-    label: longDayLabel(d.date),
-    leftMin: d.minutesBySide.L,
-    rightMin: d.minutesBySide.R,
-    nursingMin: d.breastMinutes,
-    feeds: d.feeds,
-    bottleOz: d.bottleOz,
-    avgGapMin: gaps.get(d.date) ?? null,
-  }));
+const fmtShortDate = (t: number, year = false) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}) });
+const plural = (n: number, w: string) => `${n} ${n === 1 ? w : `${w}s`}`;
+
+/**
+ * Charts view-model from core metrics. 7/14/30: `m` = computeMetrics(feeds, n, now, chartMetricsOptions('day')).
+ * All: `m` = computeMetrics(feeds, 'all', now, chartMetricsOptions(allTimeBucket(...))); week/month bars are core's
+ * per-day averages for that bucket, partial ones faded; "/ day" stats = totals ÷ days in the range.
+ */
+export function buildChartsVM(m: Metrics, range: ChartRange): ChartsVM {
+  const all = range === 'all';
+  const bucket = m.bucket;
+  const multiYear = m.from !== null && m.to !== null && new Date(m.from).getFullYear() !== new Date(m.to - 1).getFullYear();
+  const what = bucket;
+  const bar = (b: MetricsBucket): ChartDayVM => ({
+    key: b.key,
+    tick: !all ? (range === 7 ? weekdayInitial(b.key) : dayOfMonth(b.key)) : barTick(bucket, b.start, multiYear),
+    label: !all ? longDayLabel(b.key) : bucket === 'day' ? b.label : `${b.label}${b.partial ? ` (partial, ${plural(b.days, 'day')})` : ''}, daily average`,
+    leftMin: b.perDayAvg.minutesBySide.L,
+    rightMin: b.perDayAvg.minutesBySide.R,
+    nursingMin: b.perDayAvg.breastMinutes,
+    feeds: b.perDayAvg.feeds,
+    bottleOz: b.perDayAvg.bottleOz,
+    avgGapMin: b.avgGapMinutes,
+    ...(all ? { partial: b.partial } : {}),
+  });
   const { L, R } = m.totals.minutesBySide;
   const tot = L + R;
-  return {
+  const vm: ChartsVM = {
     range,
-    bucket: 'day',
-    days,
+    bucket,
+    days: m.buckets.map(bar),
     split: { L: tot ? L / tot : 0, R: tot ? R / tot : 0, leftMin: L, rightMin: R },
     avg: { feedsPerDay: m.perDayAvg.feeds, nursingMinPerDay: m.perDayAvg.breastMinutes, bottleOzPerDay: m.perDayAvg.bottleOz, gapMin: m.avgGapMinutes, feedMin: m.avgFeedMinutes },
     hasData: m.totals.feeds > 0,
   };
+  if (!all) return vm;
+  const bars = m.buckets;
+  const partials = bucket === 'day' ? [] : bars.filter((b) => b.partial);
+  let partialNote: string | null = null;
+  if (partials.length) {
+    const parts = partials.map((b) => `${b === bars[bars.length - 1] ? `this ${what} so far` : b === bars[0] ? `first ${what}` : b.label}: ${plural(b.days, 'day')}`);
+    partialNote = `Faded bars are partial ${what}s, averaged over the days they cover (${parts.join(', ')}).`;
+  }
+  const now = m.to === null ? 0 : m.to - 1;
+  const sameYear = m.from !== null && new Date(m.from).getFullYear() === new Date(now).getFullYear();
+  vm.allTime = {
+    rangeText: m.from === null ? 'No feeds yet' : `${fmtShortDate(m.from, !sameYear)} – ${fmtShortDate(now, true)} · ${plural(m.rangeDays, 'day')}`,
+    barCaption: bucket === 'day' ? 'One bar per day' : `Each bar is the daily average for that ${what}${bucket === 'week' ? ' (Mon–Sun)' : ''}`,
+    partialNote,
+  };
+  return vm;
+}
+
+/** All-time charts straight from feeds (pure; what useChartsVM('all') computes). */
+export function buildAllTimeChartsVM(feeds: readonly Feed[], now: number): ChartsVM {
+  const first = computeMetrics(feeds, 0, now).firstFeedAt;
+  return buildChartsVM(computeMetrics(feeds, 'all', now, chartMetricsOptions(allTimeBucket(first, now))), 'all');
 }
 
 /* ---------- core provider (tests / dev demo) ---------- */
@@ -196,9 +234,9 @@ export function useBabyNameMigration() {
   const h = useHousehold();
   const ready = useCoreReady();
   const sync = useSync();
-  const syncedAtMount = useRef(sync.lastSyncedAt);
+  const [syncedAtMount] = useState(sync.lastSyncedAt);
   const done = useRef(false);
-  const synced = sync.lastSyncedAt !== null && sync.lastSyncedAt !== syncedAtMount.current;
+  const synced = sync.lastSyncedAt !== null && sync.lastSyncedAt !== syncedAtMount;
   const canDecide = ready && (h.status === 'none' || (synced && !!h.me));
   useEffect(() => {
     if (done.current || !canDecide) return;
@@ -304,67 +342,14 @@ export function useHistoryVM(units: Units): HistoryDayVM[] {
   return useMemo(() => groupHistory(feeds.map((f) => feedToRow(f, meId, members, units, now)), now, units), [feeds, meId, members, units, now]);
 }
 
-const fmtShortDate = (t: number, year = false) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}) });
-
-/**
- * All-time charts: core's computeMetrics (core day attribution: a feed counts on the local day it started) over
- * first-feed-day → today, then regrouped by ./metrics (daily ≤ 31 days, Mon-start weeks, months > 26 weeks).
- * Week/month bars are DAILY AVERAGES for that bucket; "/ day" stats divide totals by the days in the range.
- */
-export function buildAllTimeChartsVM(feeds: readonly Feed[], now: number): ChartsVM {
-  const live = feeds.filter((f) => !f.deleted);
-  const starts = live.map(feedStart).filter((t) => t <= now);
-  const first = starts.length ? starts.reduce((a, b) => (b < a ? b : a)) : null;
-  const n = rangeDayCount(first, now);
-  const m = n ? computeMetrics(live, n, now) : null;
-  const s = summarizeAllTime(m?.days ?? [], starts);
-  const what = s.bucket === 'week' ? 'week' : s.bucket === 'month' ? 'month' : 'day';
-  const days: ChartDayVM[] = s.bars.map((b) => ({
-    key: b.key,
-    tick: b.tick,
-    label: b.bucket === 'day' ? b.label : `${b.label}${b.partial ? ` (partial, ${b.days} ${b.days === 1 ? 'day' : 'days'})` : ''}, daily average`,
-    leftMin: b.leftMin,
-    rightMin: b.rightMin,
-    nursingMin: b.nursingMin,
-    feeds: b.feeds,
-    bottleOz: b.bottleOz,
-    avgGapMin: b.avgGapMin,
-    partial: b.partial,
-  }));
-  let partialNote: string | null = null;
-  if (s.partialBars.length) {
-    const parts = s.partialBars.map((b) => `${b === s.bars[s.bars.length - 1] ? `this ${what} so far` : b === s.bars[0] ? `first ${what}` : b.label}: ${b.days} ${b.days === 1 ? 'day' : 'days'}`);
-    partialNote = `Faded bars are partial ${what}s, averaged over the days they cover (${parts.join(', ')}).`;
-  }
-  const firstDay = m?.days[0]?.dayStart ?? null;
-  const sameYear = firstDay !== null && new Date(firstDay).getFullYear() === new Date(now).getFullYear();
-  return {
-    range: 'all',
-    bucket: s.bucket,
-    days,
-    split: s.split,
-    avg: { feedsPerDay: s.perDay.feeds, nursingMinPerDay: s.perDay.nursingMin, bottleOzPerDay: s.perDay.bottleOz, gapMin: s.avgGapMin, feedMin: m?.avgFeedMinutes ?? null },
-    hasData: s.totals.feeds > 0,
-    allTime: {
-      rangeText: firstDay === null ? 'No feeds yet' : `${fmtShortDate(firstDay, !sameYear)} – ${fmtShortDate(now, true)} · ${n} ${n === 1 ? 'day' : 'days'}`,
-      barCaption: s.bucket === 'day' ? 'One bar per day' : `Each bar is the daily average for that ${what}${s.bucket === 'week' ? ' (Mon–Sun)' : ''}`,
-      partialNote,
-    },
-  };
-}
-
 export function useChartsVM(range: ChartRange): ChartsVM {
   const all = range === 'all';
-  const days = all ? 7 : range;
-  const m = useMetrics(days);
-  // One extra day so the first day's first gap has a predecessor.
-  const recent = useFeeds({ days: days + 1 });
-  const everything = useFeeds();
+  // Daily range (also gives firstFeedAt, which is not range-limited, for the All bucket choice).
+  const daily = useMetrics(all ? 1 : range, chartMetricsOptions('day'));
   const now = useNow(60_000);
-  return useMemo(
-    () => (all ? buildAllTimeChartsVM(everything, now) : buildChartsVM(m, recent.map(feedStart), range)),
-    [all, everything, now, m, recent, range],
-  );
+  const bucket = all ? allTimeBucket(daily.firstFeedAt, now) : 'day';
+  const allTime = useMetrics(all ? 'all' : 0, chartMetricsOptions(bucket)); // range 0 = nothing to compute
+  return useMemo(() => buildChartsVM(all ? allTime : daily, range), [all, allTime, daily, range]);
 }
 
 export function useSyncVM(): SyncVM & { syncNow: () => Promise<void> } {
@@ -379,7 +364,6 @@ export class FeedAlreadyRunning extends Error {}
 export function useActions() {
   const a = useActiveFeed();
   const fa = useFeedActions();
-  const core = useCore();
   const blocked = useBlocked();
   return gateActions(blocked, {
     startFeed: async (side: Side) => {
@@ -389,19 +373,8 @@ export function useActions() {
     pause: async () => { await a.pause(); },
     resume: async () => { await a.resume(); },
     endFeed: async () => { await a.end(); },
-    /**
-     * End a feed that is running but is NOT the active one (both phones started a feed; SPEC: "UI may offer
-     * end/discard"). Core's end() only targets the newest feed and BreastPatch has no `status`, so this mirrors
-     * feed.end() through editEntry (which validates). TODO(Dealer): replace with a core end(id) when available.
-     */
-    endOtherFeed: async (id: string) => {
-      if (id === a.feed?.id) { await a.end(); return; }
-      const f = a.others.find((o) => o.id === id);
-      if (!f) return;
-      const endedAt = f.status === 'paused' && f.pausedAt !== null ? f.pausedAt : Math.max(core.now(), ...f.segments.map((s) => s.startedAt));
-      const segments = f.segments.map((s) => (s.endedAt === null ? { ...s, endedAt } : s));
-      await fa.editEntry(id, { endedAt, segments, status: 'ended', pausedAt: null } as BreastPatch);
-    },
+    /** End a feed by id: the active one, or (both phones started) the other phone's running/paused feed. */
+    endOtherFeed: async (id: string) => { await a.end(id); },
     /** Discard the active feed, or (conflict) another running feed by id. */
     discardFeed: async (id: string) => { if (id === a.feed?.id) await a.discard(); else await fa.deleteEntry(id); },
     deleteEntry: (id: string) => fa.deleteEntry(id),

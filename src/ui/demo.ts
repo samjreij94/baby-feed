@@ -77,7 +77,11 @@ export function createDemoServer(kv: Storage | null = typeof localStorage === 'u
     fetch: async (input: string, init?: RequestInit): Promise<Response> => {
       if (down) throw new TypeError('Failed to fetch');
       touched = [];
-      const res = await handleRequest(new Request(input, init), { ALLOWED_ORIGINS: '*' }, deps);
+      // In-process: no network to abort. Drop the signal (as server/src/app.ts's test server does) — under jsdom it's
+      // jsdom's AbortSignal, which Node 20's Request constructor rejects. An already-aborted one still fails like fetch.
+      const { signal, ...rest } = init ?? {};
+      if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+      const res = await handleRequest(new Request(input, rest), { ALLOWED_ORIGINS: '*' }, deps);
       touched.forEach((s) => s.flush());
       return res;
     },

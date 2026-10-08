@@ -77,7 +77,7 @@ export function ChartsScreen({ units }: { units: Units }) {
 
       <section className="card chart-card">
         <h2>Average gap between feeds</h2>
-        <div className="dim small">Start to start{at ? ` · gaps over 12h left out${vm.bucket === 'day' ? '' : ` · per ${vm.bucket}`}` : ''} · range average {vm.avg.gapMin === null ? '—' : fmtMinShort(vm.avg.gapMin)}</div>
+        <div className="dim small">Start to start · gaps over 12h left out{at && vm.bucket !== 'day' ? ` · per ${vm.bucket}` : ''} · range average {vm.avg.gapMin === null ? '—' : fmtMinShort(vm.avg.gapMin)}</div>
         <LineChart title="Average gap between feeds" days={vm.days} values={vm.days.map((d) => d.avgGapMin)} nice={niceMinutes} fmt={minTick(gapMax)} cls="line-gap" minTickPx={minTickPx} />
       </section>
       </>)}

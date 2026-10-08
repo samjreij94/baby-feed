@@ -45,6 +45,50 @@ describe('baby name (synced household name)', () => {
     other.dispose();
   });
 
+  const joinViaSetup = async (code: string, baby: string) => {
+    fireEvent.click(await screen.findByRole('button', { name: 'Join with code or link' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Household code or link' }), { target: { value: code } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Karyn' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /baby’s name/i }), { target: { value: baby } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Join' })); });
+  };
+  /** Join finished: pulled at least once and nothing left in the outbox. */
+  const settled = (core: FeedCore) => waitFor(() => {
+    const s = core.getSnapshot().sync;
+    expect(s.lastSyncedAt).not.toBeNull();
+    expect(s.pending).toBe(0);
+    expect(s.state).toBe('idle');
+  });
+
+  it('a name typed while joining does NOT overwrite the household’s name (household wins)', async () => {
+    const a = testCore({ deviceId: 'phone-a' });
+    await a.core.createHousehold('Samir');
+    await a.core.setBabyName('Josephine');
+    await a.core.syncNow();
+    const b = testCore({ deviceId: 'phone-b', server: a.server });
+    renderApp(b.core);
+    await joinViaSetup(a.core.inviteCode!, 'Jo');
+    await settled(b.core);
+    await act(async () => { await b.core.syncNow(); await a.core.syncNow(); });
+    expect(b.core.getSnapshot().babyName).toBe('Josephine');
+    expect(a.core.getSnapshot().babyName).toBe('Josephine');
+    expect(await screen.findByRole('heading', { name: 'Josephine' })).toBeInTheDocument();
+    b.core.dispose();
+  });
+
+  it('a name typed while joining applies when the household has none', async () => {
+    const a = testCore({ deviceId: 'phone-a' });
+    await a.core.createHousehold('Samir');
+    const b = testCore({ deviceId: 'phone-b', server: a.server });
+    renderApp(b.core);
+    await joinViaSetup(a.core.inviteCode!, 'Josephine');
+    await settled(b.core);
+    expect(b.core.getSnapshot().babyName).toBe('Josephine');
+    await act(async () => { await a.core.syncNow(); });
+    expect(a.core.getSnapshot().babyName).toBe('Josephine');
+    b.core.dispose();
+  });
+
   it('migrates an old device-local name into core once (household had none), then drops the local copy', async () => {
     const a = testCore({ deviceId: 'phone-a' });
     await a.core.createHousehold('Samir');
