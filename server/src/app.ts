@@ -114,7 +114,11 @@ export function createMemoryServer(opts: { now?: () => number; env?: HttpEnv; pa
     /** A fetch implementation hitting this server. */
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       if (down) throw new TypeError('Failed to fetch');
-      return handleRequest(new Request(input, init), env, deps);
+      // In-process: no network to abort. Drop the signal — under jsdom it's jsdom's AbortSignal, which Node's
+      // (undici) Request constructor rejects on Node 20. An already-aborted signal still fails like fetch would.
+      const { signal, ...rest } = init ?? {};
+      if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+      return handleRequest(new Request(input, rest), env, deps);
     }) as typeof fetch,
   };
 }
