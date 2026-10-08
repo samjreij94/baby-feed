@@ -443,3 +443,10 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .banner-conflict { flex-wrap: wrap; row-gap: 8px; }
 .banner-conflict .grow { min-width: 150px; }
 .banner-actions { display: flex; gap: 8px; margin-left: auto; }
+
+/* ---------- Charts: All-time range ---------- */
+.range-note { margin: 12px 2px 0; display: flex; flex-direction: column; gap: 3px; }
+.range-note b { font-weight: 650; font-size: 16px; }
+.chart-cap { margin: -2px 0 4px; }
+.chart rect.partial { opacity: .5; }
+.chart circle.partial { opacity: .55; }

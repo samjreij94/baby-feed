@@ -32,7 +32,8 @@ export function niceMinutes(v: number): number {
   return Math.ceil(v / 60) * 60;
 }
 
-export interface ChartDay { key: string; tick: string; label: string }
+/** One bar. `partial`: an All-time week/month only partly inside the range (drawn lighter). */
+export interface ChartDay { key: string; tick: string; label: string; partial?: boolean }
 export interface Series { name: string; cls: string; values: readonly number[] }
 
 const PAD = { l: 34, r: 6, t: 18, b: 22 };
@@ -55,10 +56,11 @@ function Axis({ w, h, max, fmt }: { w: number; h: number; max: number; fmt: (v: 
   );
 }
 
-function XTicks({ days, w, h }: { days: readonly ChartDay[]; w: number; h: number }) {
+/** Label every k-th bar (counted back from the newest), k large enough that labels ≥ minTickPx apart never collide. */
+function XTicks({ days, w, h, minTickPx = 0 }: { days: readonly ChartDay[]; w: number; h: number; minTickPx?: number }) {
   const n = days.length;
   const band = (w - PAD.l - PAD.r) / n;
-  const every = tickEvery(n);
+  const every = Math.max(tickEvery(n), minTickPx ? Math.ceil(minTickPx / band) : 1);
   return (
     <g className="axis">
       {days.map((d, i) => ((n - 1 - i) % every === 0 ? (
@@ -69,8 +71,8 @@ function XTicks({ days, w, h }: { days: readonly ChartDay[]; w: number; h: numbe
 }
 
 /** Stacked bar chart, one bar per day. */
-export function BarChart({ days, series, fmt, valueFmt = fmt, nice = niceMax, title, height = 168, valueLabels }: {
-  days: readonly ChartDay[]; series: readonly Series[]; fmt: (v: number) => string; valueFmt?: (v: number) => string; nice?: (v: number) => number; title: string; height?: number; valueLabels?: boolean;
+export function BarChart({ days, series, fmt, valueFmt = fmt, nice = niceMax, title, height = 168, valueLabels, minTickPx }: {
+  days: readonly ChartDay[]; series: readonly Series[]; fmt: (v: number) => string; valueFmt?: (v: number) => string; nice?: (v: number) => number; title: string; height?: number; valueLabels?: boolean; minTickPx?: number;
 }) {
   const [ref, w] = useWidth<HTMLDivElement>();
   const n = days.length;
@@ -93,21 +95,21 @@ export function BarChart({ days, series, fmt, valueFmt = fmt, nice = niceMax, ti
                 if (v <= 0) return null;
                 const bh = Math.max(1.5, (v / max) * ih);
                 y -= bh;
-                return <rect key={s.name} x={x} y={y} width={bw} height={bh} rx={Math.min(3, bw / 3)} className={s.cls} />;
+                return <rect key={s.name} x={x} y={y} width={bw} height={bh} rx={Math.min(3, bw / 3)} className={d.partial ? `${s.cls} partial` : s.cls} />;
               })}
               {valueLabels && totals[i]! > 0 && <text x={x + bw / 2} y={y - 5} textAnchor="middle" className="val">{valueFmt(totals[i]!)}</text>}
             </g>
           );
         })}
-        <XTicks days={days} w={w} h={height} />
+        <XTicks days={days} w={w} h={height} minTickPx={minTickPx} />
       </svg>
     </div>
   );
 }
 
 /** Line with dots; null values break the line. */
-export function LineChart({ days, values, fmt, nice = niceMax, title, cls, height = 150 }: {
-  days: readonly ChartDay[]; values: readonly (number | null)[]; fmt: (v: number) => string; nice?: (v: number) => number; title: string; cls: string; height?: number;
+export function LineChart({ days, values, fmt, nice = niceMax, title, cls, height = 150, minTickPx }: {
+  days: readonly ChartDay[]; values: readonly (number | null)[]; fmt: (v: number) => string; nice?: (v: number) => number; title: string; cls: string; height?: number; minTickPx?: number;
 }) {
   const [ref, w] = useWidth<HTMLDivElement>();
   const n = days.length;
@@ -126,8 +128,8 @@ export function LineChart({ days, values, fmt, nice = niceMax, title, cls, heigh
       <svg width={w} height={height} role="img" aria-label={`${title}: ${days.map((dd, i) => `${dd.label} ${values[i] === null ? 'no data' : fmt(values[i]!)}`).join(', ')}`}>
         <Axis w={w} h={height} max={max} fmt={fmt} />
         <path d={d} className={`line ${cls}`} />
-        {values.map((v, i) => (v === null ? null : <circle key={days[i]!.key} cx={pt(i, v)[0]} cy={pt(i, v)[1]} r={n > 14 ? 2.5 : 3.5} className={`dot ${cls}`} />))}
-        <XTicks days={days} w={w} h={height} />
+        {values.map((v, i) => (v === null ? null : <circle key={days[i]!.key} cx={pt(i, v)[0]} cy={pt(i, v)[1]} r={n > 14 ? 2.5 : 3.5} className={`dot ${cls}${days[i]!.partial ? ' partial' : ''}`} />))}
+        <XTicks days={days} w={w} h={height} minTickPx={minTickPx} />
       </svg>
     </div>
   );

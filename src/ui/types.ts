@@ -8,6 +8,9 @@ export type FeedKind = 'breast' | 'bottle';
 export type Units = 'oz' | 'ml';
 export type NightPref = 'auto' | 'on' | 'off';
 export type RangeDays = 7 | 14 | 30;
+/** Charts range toggle: rolling 7/14/30 days (core metrics) or everything since the first feed (UI-aggregated). */
+export type ChartRange = RangeDays | 'all';
+export type ChartBucket = 'day' | 'week' | 'month';
 
 export const SIDE_NAME: Record<Side, string> = { L: 'Left', R: 'Right' };
 export const MILK_NAME: Record<Milk, string> = { breast: 'Breast milk', formula: 'Formula' };
@@ -98,11 +101,18 @@ export interface ChartDayVM {
   bottleOz: number;
   /** Mean minutes between consecutive feed starts that day; null if < 2 feeds. */
   avgGapMin: number | null;
+  /** All-time week/month bar covering only part of its week/month (drawn lighter). */
+  partial?: boolean;
 }
 
 export interface ChartsVM {
-  range: RangeDays;
+  range: ChartRange;
+  /** What one bar is. Always 'day' for 7/14/30. */
+  bucket: ChartBucket;
+  /** One entry per bar (a day, or for All-time a week/month whose values are DAILY AVERAGES). */
   days: ChartDayVM[];
+  /** All-time only: "Jun 17 – Oct 8, 2026 · 114 days", bar caption, and a partial-bucket note. */
+  allTime?: { rangeText: string; barCaption: string; partialNote: string | null };
   /** Left vs right share of nursing time across the range, 0..1 (sum 1, or 0/0 with no data). */
   split: { L: number; R: number; leftMin: number; rightMin: number };
   avg: { feedsPerDay: number; nursingMinPerDay: number; bottleOzPerDay: number; gapMin: number | null; feedMin: number | null };

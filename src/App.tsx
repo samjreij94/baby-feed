@@ -104,7 +104,7 @@ export default function App() {
               onOpenTimer={() => setTimerOpen(true)}
             />
           )}
-          {tab === 'charts' && <ChartsScreen units={prefs.units} initialRange={(Number(new URLSearchParams(location.search).get('range')) || 7) as 7 | 14 | 30} />}
+          {tab === 'charts' && <ChartsScreen units={prefs.units} />}
           {tab === 'settings' && settingsView === 'main' && <SettingsScreen prefs={prefs} night={night} onPrefs={setPrefs} onLeft={() => setSetup(true)} onImport={() => setSettingsView('import')} />}
           {tab === 'settings' && settingsView === 'import' && <NaraImportScreen onBack={() => setSettingsView('main')} onViewHistory={() => { setSettingsView('main'); setTab('history'); }} />}
           <TabBar tab={tab} onChange={(t) => { setSettingsView('main'); setTab(t); }} />

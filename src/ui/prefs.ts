@@ -1,6 +1,6 @@
 /** Device-local UI preferences (night mode, units). Not synced; no core imports. */
 import { useCallback, useEffect, useState } from 'react';
-import type { Prefs } from './types';
+import type { ChartRange, Prefs } from './types';
 
 const KEY = 'bf.ui.prefs.v1';
 export const DEFAULT_PREFS: Prefs = { night: 'auto', units: 'oz' };
@@ -45,4 +45,25 @@ export function useBabyName() {
     babyListeners.forEach((l) => l(clean));
   }, []);
   return [name, save] as const;
+}
+
+/* Charts range (7 / 14 / 30 / All): device-local, remembered across tabs and launches. ?range=7|14|30|all overrides. */
+const RANGE_KEY = 'bf.ui.chartRange.v1';
+export function parseChartRange(v: string | null | undefined): ChartRange | null {
+  if (v === 'all') return 'all';
+  const n = Number(v);
+  return n === 7 || n === 14 || n === 30 ? n : null;
+}
+export function loadChartRange(): ChartRange {
+  const fromUrl = typeof location === 'undefined' ? null : parseChartRange(new URLSearchParams(location.search).get('range'));
+  if (fromUrl) return fromUrl;
+  try { return parseChartRange(localStorage.getItem(RANGE_KEY)) ?? 7; } catch { return 7; }
+}
+export function useChartRange() {
+  const [range, setRange] = useState<ChartRange>(loadChartRange);
+  const save = useCallback((r: ChartRange) => {
+    setRange(r);
+    try { localStorage.setItem(RANGE_KEY, String(r)); } catch { /* private mode */ }
+  }, []);
+  return [range, save] as const;
 }
