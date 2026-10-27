@@ -1,6 +1,6 @@
 /** Device-local UI preferences (night mode, units). Not synced; no core imports. */
 import { useCallback, useState } from 'react';
-import type { ChartRange, Prefs, WeightUnit } from './types';
+import type { ChartRange, Prefs, WeightUnit, WhoSex } from './types';
 
 const KEY = 'bf.ui.prefs.v1';
 export const DEFAULT_PREFS: Prefs = { night: 'auto', units: 'oz' };
@@ -73,4 +73,18 @@ export function useWeightUnit() {
     try { localStorage.setItem(WEIGHT_UNIT_KEY, u); } catch { /* private mode */ }
   }, []);
   return [unit, save] as const;
+}
+
+/* Which WHO standard the weight chart shows (and percentile estimates use). Defaults to girls (Josephine). Device-local. */
+const SEX_KEY = 'bf.ui.whoSex.v1';
+export function loadWhoSex(): WhoSex {
+  try { return localStorage.getItem(SEX_KEY) === 'boys' ? 'boys' : 'girls'; } catch { return 'girls'; }
+}
+export function useWhoSex() {
+  const [sex, setSex] = useState<WhoSex>(loadWhoSex);
+  const save = useCallback((s: WhoSex) => {
+    setSex(s);
+    try { localStorage.setItem(SEX_KEY, s); } catch { /* private mode */ }
+  }, []);
+  return [sex, save] as const;
 }

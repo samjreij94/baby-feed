@@ -15,7 +15,7 @@ import { TimerScreen } from './screens/TimerScreen';
 import { IconDrop } from './components/Icons';
 import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useBabyNameMigration, useHouseholdVM, useReady, useWeightActionsVM } from './ui/adapter';
 import { fmtClock } from './ui/format';
-import { usePrefs, useWeightUnit } from './ui/prefs';
+import { usePrefs, useWeightUnit, useWhoSex } from './ui/prefs';
 import { useTheme } from './ui/theme';
 import type { EntryDraft, WeightDraft } from './ui/types';
 import './ui/styles/app.css';
@@ -52,6 +52,7 @@ export default function App() {
   const [wSheet, setWSheet] = useState<WeightDraft | null>(null);
   const [wDel, setWDel] = useState<string | null>(null);
   const [wUnit, setWUnit] = useWeightUnit();
+  const [wSex, setWSex] = useWhoSex();
   const wAct = useWeightActionsVM();
   const active = useActiveFeedVM();
   const act = useActions();
@@ -119,6 +120,8 @@ export default function App() {
             <WeightScreen
               unit={wUnit}
               onUnit={setWUnit}
+              sex={wSex}
+              onSex={setWSex}
               onAdd={() => setWSheet(newWeightDraft())}
               onEdit={(d) => setWSheet(d)}
               onDelete={(id) => void wAct.deleteWeight(id).then(() => setToast('Weight deleted'), fail)}

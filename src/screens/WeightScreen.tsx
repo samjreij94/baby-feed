@@ -6,20 +6,21 @@ import { PersonChip } from '../components/PersonChip';
 import { Segmented } from '../components/Segmented';
 import { formatWeight, ordinal, useWeightVM, WHO_SOURCE } from '../ui/adapter';
 import { fmtDay, fmtTime } from '../ui/format';
-import type { WeightDraft, WeightRowVM, WeightUnit } from '../ui/types';
+import type { WeightDraft, WeightRowVM, WeightUnit, WhoSex } from '../ui/types';
 
 const UNIT_OPTS = [{ value: 'lb', label: 'lb / oz' }, { value: 'kg', label: 'kg' }] as const;
+const SEX_OPTS = [{ value: 'girls', label: 'Girls' }, { value: 'boys', label: 'Boys' }] as const;
 const pct = (p: number | null) => (p === null ? '—' : ordinal(p));
 
-export function WeightScreen({ unit, onUnit, onAdd, onEdit, onDelete }: {
-  unit: WeightUnit; onUnit: (u: WeightUnit) => void; onAdd: () => void; onEdit: (d: WeightDraft) => void; onDelete: (id: string) => void;
+export function WeightScreen({ unit, onUnit, sex, onSex, onAdd, onEdit, onDelete }: {
+  unit: WeightUnit; onUnit: (u: WeightUnit) => void; sex: WhoSex; onSex: (s: WhoSex) => void; onAdd: () => void; onEdit: (d: WeightDraft) => void; onDelete: (id: string) => void;
 }) {
-  const vm = useWeightVM();
+  const vm = useWeightVM(sex);
   const [del, setDel] = useState<WeightRowVM | null>(null);
   const latest = vm.rows[0];
   const name = vm.babyName ?? 'Baby';
   const gain = vm.gainG === null ? null : `${vm.gainG >= 0 ? '+' : '−'}${formatWeight(Math.abs(vm.gainG), unit)}`;
-  const summary = `${name}'s weight by age, 0 to 24 months, against WHO girls weight-for-age percentile lines (3rd, 15th, 50th, 85th, 97th).`
+  const summary = `${name}'s weight by age, 0 to 24 months, against WHO weight-for-age percentile lines for ${sex} (3rd, 15th, 50th, 85th, 97th).`
     + (latest ? ` ${vm.points.length} logged. Latest ${formatWeight(latest.grams, unit)} at ${latest.ageLabel}${latest.percentile !== null ? `, about the ${ordinal(latest.percentile)} percentile` : ''}.` : ' No weights logged yet.');
   return (
     <div className="screen" data-testid="weight">
@@ -31,7 +32,7 @@ export function WeightScreen({ unit, onUnit, onAdd, onEdit, onDelete }: {
 
       <div className="stats">
         <div className="stat"><b className="num">{latest ? formatWeight(latest.grams, unit) : '—'}</b><span>{latest ? `latest · ${fmtDay(latest.at)}` : 'latest'}</span></div>
-        <div className="stat"><b className="num">{latest ? pct(latest.percentile) : '—'}</b><span>percentile (est.)</span></div>
+        <div className="stat"><b className="num">{latest ? pct(latest.percentile) : '—'}</b><span>percentile (est., WHO {sex})</span></div>
         <div className="stat"><b className="num">{gain ?? '—'}</b><span>since previous</span></div>
         <div className="stat"><b className="num">{latest ? latest.ageLabel : '—'}</b><span>age at latest</span></div>
       </div>
@@ -40,9 +41,10 @@ export function WeightScreen({ unit, onUnit, onAdd, onEdit, onDelete }: {
         <h2>Weight by age <span className="dim unit">· {unit === 'kg' ? 'kg' : 'lb'}, 0–24 months</span></h2>
         <div className="legend wlegend">
           <span><i className="sw sw-me" />{name}</span>
-          <span><i className="sw sw-who" />WHO girls percentiles</span>
+          <span><i className="sw sw-who" />WHO {sex} percentiles</span>
         </div>
-        <GrowthChart unit={unit} points={vm.points} summary={summary} />
+        <Segmented label="WHO standard" value={sex} options={SEX_OPTS} onChange={onSex} />
+        <GrowthChart unit={unit} sex={sex} points={vm.points} summary={summary} />
         {vm.rows.length === 0 && <div className="dim small">Add {name}’s first weight to see her on the curves.</div>}
       </section>
 
@@ -81,7 +83,7 @@ export function WeightScreen({ unit, onUnit, onAdd, onEdit, onDelete }: {
           Percentile lines: {WHO_SOURCE.name}. {WHO_SOURCE.note}{' '}
           <a href={WHO_SOURCE.url} target="_blank" rel="noopener noreferrer">who.int/tools/child-growth-standards</a>
         </p>
-        <p className="dim small">Percentiles next to logged weights are estimated from WHO’s published LMS values. This is a tracker, not medical advice; talk to your pediatrician about growth.</p>
+        <p className="dim small">Percentiles next to logged weights are estimated from WHO’s published LMS values for the selected sex (girls by default, since that’s who this is for). This is a tracker, not medical advice; talk to your pediatrician about growth.</p>
       </section>
 
       {del && (

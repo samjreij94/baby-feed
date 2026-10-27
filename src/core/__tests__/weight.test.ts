@@ -4,6 +4,7 @@ import {
   WHO_MAX_DAYS, WHO_PERCENTILES,
 } from '../weight';
 import { WHO_SOURCE, WHO_WFA_GIRLS_DAYS } from '../who-wfa-girls';
+import { WHO_WFA_BOYS_DAYS } from '../who-wfa-boys';
 
 describe('units', () => {
   it('lb/oz ↔ grams', () => {
@@ -121,5 +122,56 @@ describe('WHO weight-for-age, girls (source: who.int)', () => {
     expect(whoPercentile(3232, 0)).toBeCloseTo(50, 0);
     expect(whoPercentile(3500, 800)).toBeNull(); // beyond 24 months
     expect(whoPercentile(3500, -1)).toBeNull();
+  });
+});
+
+describe('WHO weight-for-age, boys (source: who.int)', () => {
+  it('covers days 0..730 with the published day-0 and day-730 rows', () => {
+    expect(WHO_WFA_BOYS_DAYS).toHaveLength(731);
+    expect(WHO_WFA_BOYS_DAYS[0]).toEqual([2.507, 2.865, 3.346, 3.878, 4.35, 0.3487, 3.3464, 0.14602]);
+    expect(WHO_WFA_BOYS_DAYS[730]).toEqual([9.802, 10.793, 12.148, 13.677, 15.065, -0.0136, 12.1482, 0.11425]);
+    expect(WHO_PERCENTILES.map((p) => whoKg(p, 0, 'boys'))).toEqual([2.507, 2.865, 3.346, 3.878, 4.35]);
+  });
+
+  // WHO's monthly table (tab_wfa_boys_p_0_5.xlsx), rounded to 0.1 kg: P3 / P15 / P50 / P85 / P97
+  it.each([
+    [0, [2.5, 2.9, 3.3, 3.9, 4.3]],
+    [1, [3.4, 3.9, 4.5, 5.1, 5.7]],
+    [6, [6.4, 7.1, 7.9, 8.9, 9.7]],
+    [12, [7.8, 8.6, 9.6, 10.8, 11.8]],
+    [18, [8.9, 9.7, 10.9, 12.3, 13.5]],
+    [24, [9.8, 10.8, 12.2, 13.7, 15.1]],
+  ])('agrees with the published monthly table at month %i', (month, expected) => {
+    const day = Math.round(month * 30.4375);
+    WHO_PERCENTILES.forEach((p, i) => expect(Math.abs(whoKg(p, day, 'boys') - expected[i]!)).toBeLessThanOrEqual(0.06)); // month 24 sits half a day past the last daily row
+  });
+
+  it('percentile lines never cross; boys run heavier than girls at the median every day', () => {
+    for (let d = 0; d <= WHO_MAX_DAYS; d++) {
+      const row = WHO_WFA_BOYS_DAYS[d]!;
+      for (let i = 0; i < 4; i++) expect(row[i]!).toBeLessThan(row[i + 1]!);
+      expect(whoKg(50, d, 'boys')).toBeGreaterThan(whoKg(50, d, 'girls'));
+    }
+    for (const p of WHO_PERCENTILES) {
+      const line = whoLine(p, 7, 'boys');
+      expect(line[0]!.kg).toBe(WHO_WFA_BOYS_DAYS[0]![WHO_PERCENTILES.indexOf(p)]);
+      expect(line[line.length - 1]!.months).toBeCloseTo(24, 1);
+      for (let i = 1; i < line.length; i++) expect(line[i]!.kg).toBeGreaterThan(line[i - 1]!.kg);
+    }
+  });
+
+  it('LMS percentile reproduces the boys percentile lines and follows the selected sex', () => {
+    for (const d of [0, 30, 100, 182, 365, 540, 730]) {
+      WHO_PERCENTILES.forEach((p, i) => {
+        expect(Math.abs(whoPercentile(WHO_WFA_BOYS_DAYS[d]![i]! * 1000, d, 'boys')! - p)).toBeLessThan(0.6);
+      });
+    }
+    expect(whoPercentile(3346.4, 0, 'boys')).toBeCloseTo(50, 0);
+    expect(whoZ(WHO_WFA_BOYS_DAYS[200]![6]!, 200, 'boys')).toBeCloseTo(0, 6);
+    // the same 7 kg baby at 6 months ranks higher against girls than boys
+    const day = Math.round(6 * 30.4375);
+    expect(whoPercentile(7000, day, 'girls')!).toBeGreaterThan(whoPercentile(7000, day, 'boys')!);
+    expect(whoPercentile(7000, day)).toBe(whoPercentile(7000, day, 'girls')); // default is girls
+    expect(whoPercentile(3500, 800, 'boys')).toBeNull();
   });
 });

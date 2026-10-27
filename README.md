@@ -28,9 +28,9 @@ npm run deploy     # build + gh-pages -d dist  (base: /baby-feed/)
 ## Weight tracker
 
 The **Weight** tab logs weigh-ins (lb/oz or kg; stored as grams), syncs them like feeds (new additive entry kind
-`weight`, see SPEC §8b) and plots them against the WHO Child Growth Standards weight-for-age percentile lines for girls
-(3rd/15th/50th/85th/97th, 0–24 months). WHO data: <https://www.who.int/tools/child-growth-standards/standards/weight-for-age>
-(copied verbatim into `src/core/who-wfa-girls.ts`). Not medical advice.
+`weight`, see SPEC §8b) and plots them against the WHO Child Growth Standards weight-for-age percentile lines for girls or boys
+(3rd/15th/50th/85th/97th, 0–24 months; a Girls/Boys toggle defaults to girls and also drives the percentile estimates). WHO data: <https://www.who.int/tools/child-growth-standards/standards/weight-for-age>
+(copied verbatim into `src/core/who-wfa-girls.ts` and `src/core/who-wfa-boys.ts`). Not medical advice.
 
 **Deploying a change like this (data safety):** the Worker must go first, then the app.
 

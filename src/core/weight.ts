@@ -1,8 +1,14 @@
 /**
- * Weight helpers (pure): unit conversion, validation, age, and WHO weight-for-age (girls) lookups.
+ * Weight helpers (pure): unit conversion, validation, age, and WHO weight-for-age (girls and boys) lookups.
  * Weights are stored as integer grams; lb/oz and kg are only input/display conversions.
  */
+import { WHO_WFA_BOYS_DAYS } from './who-wfa-boys';
 import { WHO_PERCENTILES, WHO_WFA_GIRLS_DAYS, type WhoPercentile } from './who-wfa-girls';
+
+/** Which WHO sex-specific standard to use. Josephine is a girl, so 'girls' is the default everywhere. */
+export type WhoSex = 'girls' | 'boys';
+export const WHO_SEXES: readonly WhoSex[] = ['girls', 'boys'];
+const TABLES = { girls: WHO_WFA_GIRLS_DAYS, boys: WHO_WFA_BOYS_DAYS } as const;
 
 export const G_PER_LB = 453.59237;
 export const G_PER_OZ = G_PER_LB / 16; // 28.349523125
@@ -63,19 +69,20 @@ export function formatAge(days: number): string {
 const COL: Record<WhoPercentile, number> = { 3: 0, 15: 1, 50: 2, 85: 3, 97: 4 };
 
 /** WHO percentile weight (kg) at an age in days (fractional days interpolate between two published rows). */
-export function whoKg(p: WhoPercentile, days: number): number {
+export function whoKg(p: WhoPercentile, days: number, sex: WhoSex = 'girls'): number {
+  const T = TABLES[sex];
   const d = Math.min(Math.max(days, 0), WHO_MAX_DAYS);
   const i = Math.floor(d);
-  const a = WHO_WFA_GIRLS_DAYS[i]![COL[p]]!;
-  const b = WHO_WFA_GIRLS_DAYS[Math.min(i + 1, WHO_MAX_DAYS)]![COL[p]]!;
+  const a = T[i]![COL[p]]!;
+  const b = T[Math.min(i + 1, WHO_MAX_DAYS)]![COL[p]]!;
   return a + (b - a) * (d - i);
 }
 
 /** One reference line: points every `stepDays` from day 0 to day 730 (always ends on the last published day). */
-export function whoLine(p: WhoPercentile, stepDays = 7): Array<{ months: number; kg: number }> {
+export function whoLine(p: WhoPercentile, stepDays = 7, sex: WhoSex = 'girls'): Array<{ months: number; kg: number }> {
   const out: Array<{ months: number; kg: number }> = [];
-  for (let d = 0; d < WHO_MAX_DAYS; d += stepDays) out.push({ months: daysToMonths(d), kg: whoKg(p, d) });
-  out.push({ months: daysToMonths(WHO_MAX_DAYS), kg: whoKg(p, WHO_MAX_DAYS) });
+  for (let d = 0; d < WHO_MAX_DAYS; d += stepDays) out.push({ months: daysToMonths(d), kg: whoKg(p, d, sex) });
+  out.push({ months: daysToMonths(WHO_MAX_DAYS), kg: whoKg(p, WHO_MAX_DAYS, sex) });
   return out;
 }
 
@@ -88,16 +95,16 @@ function normCdf(z: number): number {
 }
 
 /** WHO z-score of a weight (kg) at an age, by the LMS method. null outside 0..24 months. */
-export function whoZ(kg: number, days: number): number | null {
+export function whoZ(kg: number, days: number, sex: WhoSex = 'girls'): number | null {
   if (!(days >= 0 && days <= WHO_MAX_DAYS)) return null;
   const i = Math.round(days);
-  const [, , , , , L, M, S] = WHO_WFA_GIRLS_DAYS[i]!;
+  const [, , , , , L, M, S] = TABLES[sex][i]!;
   return L === 0 ? Math.log(kg / M) / S : (Math.pow(kg / M, L) - 1) / (L * S);
 }
 
 /** Estimated WHO percentile (0..100) of a weight at an age; null outside 0..24 months. */
-export function whoPercentile(grams: number, days: number): number | null {
-  const z = whoZ(grams / 1000, days);
+export function whoPercentile(grams: number, days: number, sex: WhoSex = 'girls'): number | null {
+  const z = whoZ(grams / 1000, days, sex);
   return z === null ? null : normCdf(z) * 100;
 }
 

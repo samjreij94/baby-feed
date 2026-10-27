@@ -12,7 +12,7 @@ export { opposite, feedStart, sideMs, nursingMs, lastFeedInfo, activeFeedView, v
 export { computeMetrics, localDateKey, startOfLocalDay, startOfLocalWeek, startOfLocalMonth } from './metrics';
 export {
   G_PER_LB, G_PER_OZ, MIN_GRAMS, MAX_GRAMS, DAYS_PER_MONTH, WHO_MAX_DAYS, WHO_MAX_MONTHS, validGrams, lbOzToGrams, kgToGrams, gramsToKg, gramsToLbOz,
-  formatWeight, formatAge, ageInDays, daysToMonths, whoKg, whoLine, whoZ, whoPercentile, ordinal, WHO_PERCENTILES, type WhoPercentile,
+  formatWeight, formatAge, ageInDays, daysToMonths, whoKg, whoLine, whoZ, whoPercentile, ordinal, WHO_PERCENTILES, WHO_SEXES, type WhoPercentile, type WhoSex,
 } from './weight';
 export { WHO_SOURCE } from './who-wfa-girls';
 export { parseInvite, formatInviteCode, readInviteFromLocation } from './invite';

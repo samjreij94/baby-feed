@@ -9,9 +9,9 @@
  * Cross-checked at generation time: L/M/S identical in WHO's z-score expanded table, and P50 matches that table's SD0 column within 0.001 (rounding).
  */
 export const WHO_SOURCE = {
-  name: 'WHO Child Growth Standards: weight-for-age, girls',
+  name: 'WHO Child Growth Standards: weight-for-age (girls and boys)',
   url: 'https://www.who.int/tools/child-growth-standards/standards/weight-for-age',
-  note: 'Birth to 24 months, percentiles 3rd / 15th / 50th / 85th / 97th (kg).',
+  note: 'Birth to 24 months, percentiles 3rd / 15th / 50th / 85th / 97th (kg), for the selected sex.',
 } as const;
 
 export const WHO_PERCENTILES = [3, 15, 50, 85, 97] as const;

@@ -7,6 +7,7 @@ export type Milk = 'breast' | 'formula';
 export type FeedKind = 'breast' | 'bottle';
 export type Units = 'oz' | 'ml';
 export type WeightUnit = 'lb' | 'kg';
+export type WhoSex = 'girls' | 'boys';
 export type NightPref = 'auto' | 'on' | 'off';
 export type RangeDays = 7 | 14 | 30;
 /** Charts range toggle: rolling 7/14/30 days (core metrics) or everything since the first feed (UI-aggregated). */

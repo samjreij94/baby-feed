@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { gramsToKg, WHO_MAX_MONTHS, WHO_PERCENTILES, whoLine } from '../ui/adapter';
-import type { WeightUnit } from '../ui/types';
+import type { WeightUnit, WhoSex } from '../ui/types';
 import { useWidth } from './Charts';
 
 const LB_PER_KG = 2.2046226218;
@@ -11,15 +11,15 @@ const LABEL = { 3: '3rd', 15: '15th', 50: '50th', 85: '85th', 97: '97th' } as co
 export interface GrowthPoint { id: string; months: number; grams: number }
 
 /**
- * Weight-by-age chart, 0–24 months: the WHO Child Growth Standards weight-for-age percentile lines for girls
+ * Weight-by-age chart, 0–24 months: the WHO Child Growth Standards weight-for-age percentile lines for girls or boys
  * (3rd, 15th, 50th, 85th, 97th) with her logged weights on top. Display units only; data is stored in grams.
  */
-export function GrowthChart({ unit, points, summary, height = 280 }: { unit: WeightUnit; points: readonly GrowthPoint[]; summary: string; height?: number }) {
+export function GrowthChart({ unit, sex = 'girls', points, summary, height = 280 }: { unit: WeightUnit; sex?: WhoSex; points: readonly GrowthPoint[]; summary: string; height?: number }) {
   const [ref, w] = useWidth<HTMLDivElement>();
   const conv = (kg: number) => (unit === 'kg' ? kg : kg * LB_PER_KG);
   const step = unit === 'kg' ? 2 : 4;
   const lo = unit === 'kg' ? 2 : 4;
-  const lines = useMemo(() => WHO_PERCENTILES.map((p) => ({ p, pts: whoLine(p).map((q) => ({ x: q.months, y: conv(q.kg) })) })), [unit]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lines = useMemo(() => WHO_PERCENTILES.map((p) => ({ p, pts: whoLine(p, 7, sex).map((q) => ({ x: q.months, y: conv(q.kg) })) })), [unit, sex]); // eslint-disable-line react-hooks/exhaustive-deps
   const tallest = Math.max(...lines.map((l) => Math.max(...l.pts.map((q) => q.y))), ...points.map((p) => conv(gramsToKg(p.grams))));
   const hi = Math.max(unit === 'kg' ? 16 : 36, Math.ceil(tallest / step) * step);
   const yTicks: number[] = [];
@@ -31,7 +31,7 @@ export function GrowthChart({ unit, points, summary, height = 280 }: { unit: Wei
   const path = (pts: readonly { x: number; y: number }[]) => pts.map((q, i) => `${i ? 'L' : 'M'}${X(q.x).toFixed(1)} ${Y(q.y).toFixed(1)}`).join('');
   const mine = points.map((p) => ({ x: p.months, y: conv(gramsToKg(p.grams)), id: p.id }));
   return (
-    <div ref={ref} className="chart growth" data-testid="growth-chart">
+    <div ref={ref} className="chart growth" data-testid="growth-chart" data-sex={sex}>
       <svg width={w} height={height} role="img" aria-label={summary}>
         <g className="axis">
           {yTicks.map((v) => (

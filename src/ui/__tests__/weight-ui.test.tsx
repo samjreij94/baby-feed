@@ -87,4 +87,45 @@ describe('Weight tab', () => {
     await screen.findByText('Weight deleted');
     expect(core.getSnapshot().weights).toHaveLength(0);
   });
+
+  it('girls/boys toggle: defaults to girls, swaps the curves, citation and percentile estimate, and persists', async () => {
+    const { core } = await seeded();
+    await core.addWeight({ grams: 7000, at: Date.now() - day });
+    renderApp(core);
+    fireEvent.click(await screen.findByRole('button', { name: 'Weight' }));
+    await screen.findAllByTestId('weight-dot');
+    const chart = () => screen.getByTestId('growth-chart');
+    const median = () => screen.getByTestId('who-p50').querySelector('path')!.getAttribute('d');
+    const list = () => screen.getByRole('region', { name: 'Logged weights' });
+    const pctText = () => within(list()).getByText(/\d(st|nd|rd|th) percentile/).textContent;
+
+    expect(screen.getByRole('radio', { name: 'Girls' })).toBeChecked();
+    expect(chart()).toHaveAttribute('data-sex', 'girls');
+    expect(screen.getByText(/WHO girls percentiles/)).toBeInTheDocument();
+    const girlsMedian = median();
+    const girlsPct = pctText();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Boys' }));
+    expect(chart()).toHaveAttribute('data-sex', 'boys');
+    expect(screen.getByText(/WHO boys percentiles/)).toBeInTheDocument();
+    expect(median()).not.toBe(girlsMedian);
+    expect(pctText()).not.toBe(girlsPct);
+    expect(localStorage.getItem('bf.ui.whoSex.v1')).toBe('boys');
+    expect(core.getSnapshot().weights.map((w) => w.grams)).toEqual([7000]); // display only; data untouched
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Girls' }));
+    expect(median()).toBe(girlsMedian);
+    expect(pctText()).toBe(girlsPct);
+    expect(localStorage.getItem('bf.ui.whoSex.v1')).toBe('girls');
+  });
+
+  it('remembers boys across a reload', async () => {
+    localStorage.setItem('bf.ui.whoSex.v1', 'boys');
+    const { core } = await seeded();
+    renderApp(core);
+    fireEvent.click(await screen.findByRole('button', { name: 'Weight' }));
+    await screen.findByTestId('growth-chart');
+    expect(screen.getByTestId('growth-chart')).toHaveAttribute('data-sex', 'boys');
+    expect(screen.getByRole('radio', { name: 'Boys' })).toBeChecked();
+  });
 });

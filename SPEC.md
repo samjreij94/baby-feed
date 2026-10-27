@@ -241,10 +241,12 @@ on `/workspace/poker-coach/server`:
   never part of `feeds`, `useMetrics`, or Nara import. `CoreSnapshot.weights` (non-deleted, newest first).
 - API: `useWeights()`, `useWeightActions()` → `addWeight({grams, at?, note?})`, `editWeight(id, {grams?, at?, note?})`,
   `deleteEntry(id)` (tombstone, same as feeds). `FeedCore.addWeight/editWeight`.
-- Growth data: `src/core/who-wfa-girls.ts` = WHO Child Growth Standards weight-for-age, girls, days 0–730 (percentile
+- Growth data: `src/core/who-wfa-girls.ts` and `src/core/who-wfa-boys.ts` = WHO Child Growth Standards weight-for-age, girls / boys, days 0–730 (percentile
   3/15/50/85/97 and L/M/S), copied verbatim from WHO's published expanded tables
   (https://www.who.int/tools/child-growth-standards/standards/weight-for-age). Percentile of a logged weight is
   estimated with the LMS formula `z = ((w/M)^L − 1)/(L·S)`, labelled "est." in the UI.
+  A Girls/Boys toggle on the Weight screen (device-local pref `bf.ui.whoSex.v1`, default girls) picks the standard for the
+  chart lines, the percentile estimates and the citation text; it never changes stored data.
 
 ## 9. Nara import
 Pure parser `src/core/import/nara.ts` (separate module, lazy-loaded): `parseNaraCsv(text, {me, members,
