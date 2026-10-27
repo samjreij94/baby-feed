@@ -20,6 +20,14 @@ import {
   useFeedActions,
   useFeeds,
   useHousehold,
+  useWeights,
+  useWeightActions,
+  ageInDays,
+  daysToMonths,
+  formatAge,
+  whoPercentile,
+  WHO_MAX_DAYS,
+  type WeightEntry,
   useLastFeed,
   useMetrics,
   useNaraImport,
@@ -38,8 +46,8 @@ import {
 import { dayOfMonth, fmtAmount, fmtMin, fmtMinShort, initials, longDayLabel, weekdayInitial } from './format';
 import { groupHistory } from './history';
 import { barTick, chooseBucket, MAX_GAP_MIN, type Bucket } from './metrics';
-import { clearLegacyBabyName, loadLegacyBabyName } from './prefs';
-import { MILK_NAME, SIDE_NAME, type NaraVM, type ActiveFeedVM, type ChartDayVM, type ChartRange, type ChartsVM, type EntryDraft, type HistoryDayVM, type HistoryEntryVM, type HomeVM, type HouseholdVM, type PersonVM, type Side, type SyncVM, type Units } from './types';
+import { clearLegacyBabyName, DEMO_BABY, loadLegacyBabyName } from './prefs';
+import { MILK_NAME, SIDE_NAME, type NaraVM, type ActiveFeedVM, type ChartDayVM, type ChartRange, type ChartsVM, type EntryDraft, type HistoryDayVM, type HistoryEntryVM, type HomeVM, type HouseholdVM, type PersonVM, type Side, type SyncVM, type Units, type WeightDraft, type WeightRowVM, type WeightVM } from './types';
 
 const MIN = 60_000;
 
@@ -342,6 +350,46 @@ export function useHistoryVM(units: Units): HistoryDayVM[] {
   return useMemo(() => groupHistory(feeds.map((f) => feedToRow(f, meId, members, units, now)), now, units), [feeds, meId, members, units, now]);
 }
 
+/* ---------- weight ---------- */
+export function weightToRow(w: WeightEntry, born: string, meId: string | null, members: readonly Member[]): WeightRowVM {
+  const ageDays = ageInDays(born, w.at);
+  const pct = whoPercentile(w.grams, ageDays);
+  return {
+    id: w.id, at: w.at, grams: w.grams, ageDays, ageLabel: formatAge(ageDays), percentile: pct === null ? null : Math.min(99, Math.max(1, Math.round(pct))),
+    by: personVM(w.loggedBy, meId, members), draft: { id: w.id, at: w.at, grams: w.grams },
+  };
+}
+
+/** Weight tab data. Baby's birth date is Josephine's (prefs.DEMO_BABY.born); the core stores only name. */
+export function useWeightVM(): WeightVM {
+  const weights = useWeights();
+  const h = useHousehold();
+  const babyName = useBabyName();
+  const meId = h.me?.id ?? null;
+  const members = h.members;
+  return useMemo(() => {
+    const rows = weights.map((w) => weightToRow(w, DEMO_BABY.born, meId, members));
+    const points = rows
+      .filter((r) => r.ageDays >= 0 && r.ageDays <= WHO_MAX_DAYS)
+      .map((r) => ({ id: r.id, months: daysToMonths(r.ageDays + (new Date(r.at).getHours() * 60 + new Date(r.at).getMinutes()) / 1440), grams: r.grams }))
+      .reverse();
+    const gainG = rows.length >= 2 ? rows[0]!.grams - rows[1]!.grams : null;
+    return { rows, points, gainG, babyName };
+  }, [weights, meId, members, babyName]);
+}
+
+export function useWeightActionsVM() {
+  const wa = useWeightActions();
+  const blocked = useBlocked();
+  return gateActions(blocked, {
+    saveWeight: async (d: WeightDraft) => {
+      if (d.id) await wa.editWeight(d.id, { at: d.at, grams: d.grams });
+      else await wa.addWeight({ at: d.at, grams: d.grams });
+    },
+    deleteWeight: (id: string) => wa.deleteEntry(id),
+  });
+}
+
 export function useChartsVM(range: ChartRange): ChartsVM {
   const all = range === 'all';
   // Daily range (also gives firstFeedAt, which is not range-limited, for the All bucket choice).
@@ -434,3 +482,8 @@ export function useNaraImportVM(): NaraVM {
   });
   return { status: n.status, error: n.error, preview, result: n.result, members, ...gated, reset: n.reset };
 }
+
+/* Weight helpers re-exported so UI files stay off src/core. */
+export {
+  formatWeight, gramsToLbOz, lbOzToGrams, kgToGrams, gramsToKg, whoLine, ordinal, WHO_PERCENTILES, WHO_SOURCE, MIN_GRAMS, MAX_GRAMS, WHO_MAX_MONTHS,
+} from '../core';

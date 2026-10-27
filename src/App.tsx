@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { EntrySheet, newBottleDraft, newBreastDraft, type SheetMode } from './components/EntrySheet';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { newWeightDraft, WeightSheet } from './components/WeightSheet';
 import { TabBar, type Tab } from './components/TabBar';
 import { Toast } from './components/Toast';
 import { ChartsScreen } from './screens/ChartsScreen';
@@ -8,19 +9,20 @@ import { HistoryScreen } from './screens/HistoryScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { NaraImportScreen } from './screens/NaraImportScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { WeightScreen } from './screens/WeightScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { TimerScreen } from './screens/TimerScreen';
 import { IconDrop } from './components/Icons';
-import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useBabyNameMigration, useHouseholdVM, useReady } from './ui/adapter';
+import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useBabyNameMigration, useHouseholdVM, useReady, useWeightActionsVM } from './ui/adapter';
 import { fmtClock } from './ui/format';
-import { usePrefs } from './ui/prefs';
+import { usePrefs, useWeightUnit } from './ui/prefs';
 import { useTheme } from './ui/theme';
-import type { EntryDraft } from './ui/types';
+import type { EntryDraft, WeightDraft } from './ui/types';
 import './ui/styles/app.css';
 
 const initialTab = (): Tab => {
   const t = new URLSearchParams(location.search).get('tab');
-  return t === 'history' || t === 'charts' || t === 'settings' || t === 'import' ? (t === 'import' ? 'settings' : t) : 'home';
+  return t === 'history' || t === 'charts' || t === 'weight' || t === 'settings' || t === 'import' ? (t === 'import' ? 'settings' : t) : 'home';
 };
 
 /** Calm placeholder while IndexedDB loads (usually a blink). Identity + a running timer never wait for this. */
@@ -47,6 +49,10 @@ export default function App() {
   const [sheet, setSheet] = useState<{ mode: SheetMode; draft: EntryDraft } | null>(null);
   const [del, setDel] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [wSheet, setWSheet] = useState<WeightDraft | null>(null);
+  const [wDel, setWDel] = useState<string | null>(null);
+  const [wUnit, setWUnit] = useWeightUnit();
+  const wAct = useWeightActionsVM();
   const active = useActiveFeedVM();
   const act = useActions();
   const lastOz = useRef(3);
@@ -58,6 +64,7 @@ export default function App() {
 
   const clearToast = useCallback(() => setToast(null), []);
   const closeSheet = useCallback(() => setSheet(null), []);
+  const closeWSheet = useCallback(() => setWSheet(null), []);
   const fail = (e: unknown) => setToast(e instanceof Error ? e.message : 'Something went wrong');
 
   if (setup && !ready && hh.status === 'none') return <div className="app"><Loading /></div>;
@@ -108,6 +115,15 @@ export default function App() {
             />
           )}
           {tab === 'charts' && <ChartsScreen units={prefs.units} />}
+          {tab === 'weight' && (
+            <WeightScreen
+              unit={wUnit}
+              onUnit={setWUnit}
+              onAdd={() => setWSheet(newWeightDraft())}
+              onEdit={(d) => setWSheet(d)}
+              onDelete={(id) => void wAct.deleteWeight(id).then(() => setToast('Weight deleted'), fail)}
+            />
+          )}
           {tab === 'settings' && settingsView === 'main' && <SettingsScreen prefs={prefs} night={night} onPrefs={setPrefs} onLeft={() => setSetup(true)} onImport={() => setSettingsView('import')} focusBaby={focusBaby} />}
           {tab === 'settings' && settingsView === 'import' && <NaraImportScreen onBack={() => setSettingsView('main')} onViewHistory={() => { setSettingsView('main'); setTab('history'); }} />}
           <TabBar tab={tab} onChange={(t) => { setSettingsView('main'); setFocusBaby(false); setTab(t); }} />
@@ -127,6 +143,20 @@ export default function App() {
         }}
         onDelete={sheet?.draft.id ? () => setDel(sheet.draft.id!) : undefined}
       />
+      <WeightSheet
+        open={!!wSheet}
+        initial={wSheet}
+        unit={wUnit}
+        onUnit={setWUnit}
+        onClose={closeWSheet}
+        onSave={async (d) => { await wAct.saveWeight(d); setToast(d.id ? 'Changes saved' : 'Weight saved'); }}
+        onDelete={wSheet?.id ? () => setWDel(wSheet.id!) : undefined}
+      />
+      {wDel && (
+        <ConfirmDialog title="Delete this weight?" body="It’s removed on both phones." confirmLabel="Delete" danger
+          onCancel={() => setWDel(null)}
+          onConfirm={() => { const id = wDel; setWDel(null); setWSheet(null); void wAct.deleteWeight(id).then(() => setToast('Weight deleted'), fail); }} />
+      )}
       {del && (
         <ConfirmDialog title="Delete this feed?" body="It’s removed on both phones." confirmLabel="Delete" danger
           onCancel={() => setDel(null)}

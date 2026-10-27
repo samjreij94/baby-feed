@@ -83,6 +83,45 @@ describe('validation', () => {
   });
 });
 
+describe('weight kind (additive)', () => {
+  const weight = (i: number, p: Record<string, unknown> = {}) => ({ ...base, id: id(i), kind: 'weight', at: NOW, grams: 3500, ...p });
+
+  it('accepts valid weights (incl. tombstones) and rejects bad ones', () => {
+    expect(validateEntry(weight(1), HH, NOW)).toBeNull();
+    expect(validateEntry(weight(1, { note: 'doctor visit', deleted: true }), HH, NOW)).toBeNull();
+    expect(validateEntry(weight(1, { grams: 100 }), HH, NOW)).toBeNull();
+    expect(validateEntry(weight(1, { grams: 30_000 }), HH, NOW)).toBeNull();
+    expect(validateEntry(weight(1, { grams: 99 }), HH, NOW)).toBe('bad grams');
+    expect(validateEntry(weight(1, { grams: 30_001 }), HH, NOW)).toBe('bad grams');
+    expect(validateEntry(weight(1, { grams: '3500' }), HH, NOW)).toBe('bad grams');
+    expect(validateEntry(weight(1, { grams: NaN }), HH, NOW)).toBe('bad grams');
+    expect(validateEntry(weight(1, { at: 'today' }), HH, NOW)).toBe('bad at');
+  });
+
+  it('syncs alongside feeds without touching them; LWW + tombstone like any entry', () => {
+    const { h, store } = hh();
+    h.sync(HH, { since: null, changes: [bottle(id(1)), breast(id(2)), weight(3)] }, NOW);
+    const before = store.since(0, 10).map((r) => JSON.stringify(r.entry));
+    expect(before).toHaveLength(3);
+    h.sync(HH, { since: null, changes: [weight(3, { grams: 3600, updatedAt: NOW + 5 })] }, NOW);
+    h.sync(HH, { since: null, changes: [weight(3, { grams: 1, updatedAt: NOW + 1 })] }, NOW); // older and invalid: no effect
+    const rows = store.since(0, 10).map((r) => r.entry);
+    expect(rows.find((e) => e.id === id(3))).toMatchObject({ grams: 3600 });
+    expect(rows.filter((e) => e.kind !== 'weight').map((e) => JSON.stringify(e))).toEqual(before.slice(0, 2));
+    h.sync(HH, { since: null, changes: [weight(3, { deleted: true, updatedAt: NOW + 9 })] }, NOW);
+    expect(store.since(0, 10).find((r) => r.entry.id === id(3))!.entry.deleted).toBe(true);
+    expect(store.size).toBe(3);
+  });
+
+  it('a bad weight in a batch is rejected without dropping the rest of the batch', () => {
+    const { h, store } = hh();
+    const r = h.sync(HH, { since: null, changes: [bottle(id(1)), weight(2, { grams: 5 }), bottle(id(3))] }, NOW);
+    if (r.status !== 200) throw new Error();
+    expect(r.body.rejected).toEqual([{ id: id(2), reason: 'bad grams' }]);
+    expect(store.size).toBe(2);
+  });
+});
+
 describe('sync', () => {
   it('stores latest version per id with LWW (updatedAt, then deviceId)', () => {
     const { h, store } = hh();

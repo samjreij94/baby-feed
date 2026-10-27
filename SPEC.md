@@ -51,7 +51,8 @@ interface BottleFeed extends EntryBase {
 interface MemberEntry extends EntryBase { kind: 'member'; name: string } // id = member id; renames sync
 interface HouseholdEntry extends EntryBase { kind: 'household'; babyName: string } // (added) id = householdId
 type Feed = BreastFeed | BottleFeed;
-type Entry = Feed | MemberEntry | HouseholdEntry;
+interface WeightEntry extends EntryBase { kind: 'weight'; at: number; grams: number /* integer-ish, 100..30000 */; note?: string } // (added)
+type Entry = Feed | MemberEntry | HouseholdEntry | WeightEntry;
 ```
 
 ### Household profile / baby name *(added)*
@@ -229,6 +230,21 @@ on `/workspace/poker-coach/server`:
 - `useHousehold().babyName` / `setBabyName(name)`; `snapshot.babyName`; `FeedCore.setBabyName()` (§1).
 - `useActiveFeed().end(id?)` / `FeedCore.end(id?)` (§2).
 - `computeMetrics`/`useMetrics` range + options, `startOfLocalWeek`, `startOfLocalMonth` (§3.3).
+
+## 8b. Weight (additive)
+- New `kind: 'weight'` (`WeightEntry`, §1). Same LWW/tombstone sync as feeds; the server's `entries` table stores any
+  kind in its `json` column, so there is **no schema change or migration**. `validateEntry` accepts `weight` with numeric
+  `at` and `grams` 100..30000; a bad weight is rejected individually (`rejected[]`) without affecting the rest of a batch.
+- Deploy order: **Worker first, then the app** (an older worker would reject `weight` as `bad kind`). Older cached
+  clients ignore unknown kinds, so feeds keep working on phones that have not updated.
+- Weights are stored as grams; lb/oz and kg are display/input conversions only (`src/core/weight.ts`). Weights are
+  never part of `feeds`, `useMetrics`, or Nara import. `CoreSnapshot.weights` (non-deleted, newest first).
+- API: `useWeights()`, `useWeightActions()` → `addWeight({grams, at?, note?})`, `editWeight(id, {grams?, at?, note?})`,
+  `deleteEntry(id)` (tombstone, same as feeds). `FeedCore.addWeight/editWeight`.
+- Growth data: `src/core/who-wfa-girls.ts` = WHO Child Growth Standards weight-for-age, girls, days 0–730 (percentile
+  3/15/50/85/97 and L/M/S), copied verbatim from WHO's published expanded tables
+  (https://www.who.int/tools/child-growth-standards/standards/weight-for-age). Percentile of a logged weight is
+  estimated with the LMS formula `z = ((w/M)^L − 1)/(L·S)`, labelled "est." in the UI.
 
 ## 9. Nara import
 Pure parser `src/core/import/nara.ts` (separate module, lazy-loaded): `parseNaraCsv(text, {me, members,

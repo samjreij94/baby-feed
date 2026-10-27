@@ -333,11 +333,29 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .form-title { font-size: 21px; margin: 0; font-weight: 650; }
 .setup .card p { margin-bottom: 0; }
 
+/* ---------- Weight ---------- */
+.h-detail.h-wrap { white-space: normal; overflow: visible; }
+.kind-weight { background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+[data-theme='night'] .kind-weight { color: var(--L-ink); }
+.sw-me { background: var(--accent); border-radius: 50%; }
+.sw-who { background: transparent; border-top: 2px solid var(--text-dim); border-radius: 0; height: 0; width: 16px; align-self: center; }
+.wlegend { flex-wrap: wrap; row-gap: 4px; }
+.who-line { fill: none; stroke: var(--text-dim); stroke-width: 1.25; opacity: .7; stroke-linejoin: round; }
+.who-line.who-50 { stroke-width: 2.25; opacity: 1; }
+.who-label { font-size: 11px; fill: var(--text-dim); font-family: -apple-system, system-ui, sans-serif; }
+.line-weight { stroke: var(--accent); stroke-width: 2.5; }
+.dot-weight { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.source-card { margin-top: 14px; }
+.source-card h2 { font-size: 17px; margin: 0 0 6px; font-weight: 650; }
+.source-card p { margin: 0 0 8px; }
+.source-card a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+[data-theme='night'] .source-card a { color: var(--L-ink); }
+
 /* ---------- Tab bar ---------- */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; max-width: 480px; margin: 0 auto;
   height: calc(var(--tabbar-h) + var(--safe-b)); padding: 0 var(--safe-r) var(--safe-b) var(--safe-l);
-  display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(5, 1fr); background: var(--surface); border-top: 1px solid var(--border);
 }
 .tabbar button { border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; font-weight: 600; color: var(--text-dim); min-height: 48px; }
 .tabbar svg { width: 25px; height: 25px; }

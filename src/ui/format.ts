@@ -36,6 +36,7 @@ export function fmtAgo(ms: number): { value: string; unit: string } {
   return { value: `${h}h ${pad(min % 60)}m`, unit: 'ago' };
 }
 
+export const fmtDay = (t: number) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 export const fmtTime = (t: number) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 export function dateKey(t: number): string {

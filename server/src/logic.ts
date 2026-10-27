@@ -79,6 +79,11 @@ export function validateEntry(e: unknown, householdId: string, now: number): str
       if (typeof e.amountOz !== 'number' || !validAmountOz(e.amountOz)) return 'bad amountOz';
       if (e.milk !== undefined && e.milk !== 'breast' && e.milk !== 'formula') return 'bad milk';
       return null;
+    case 'weight':
+      // Additive kind: grams in 100..30000 (mirrors MIN_GRAMS/MAX_GRAMS in src/core/weight.ts).
+      if (!isNum(e.at)) return 'bad at';
+      if (typeof e.grams !== 'number' || !Number.isFinite(e.grams) || e.grams < 100 || e.grams > 30_000) return 'bad grams';
+      return null;
     case 'breast': {
       if (!isNum(e.startedAt)) return 'bad startedAt';
       if (e.endedAt !== null && !isNum(e.endedAt)) return 'bad endedAt';

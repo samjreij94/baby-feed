@@ -1,6 +1,6 @@
 /** Device-local UI preferences (night mode, units). Not synced; no core imports. */
 import { useCallback, useState } from 'react';
-import type { ChartRange, Prefs } from './types';
+import type { ChartRange, Prefs, WeightUnit } from './types';
 
 const KEY = 'bf.ui.prefs.v1';
 export const DEFAULT_PREFS: Prefs = { night: 'auto', units: 'oz' };
@@ -59,4 +59,18 @@ export function useChartRange() {
     try { localStorage.setItem(RANGE_KEY, String(r)); } catch { /* private mode */ }
   }, []);
   return [range, save] as const;
+}
+
+/* Weight unit (lb/oz or kg): device-local like the other display units. */
+const WEIGHT_UNIT_KEY = 'bf.ui.weightUnit.v1';
+export function loadWeightUnit(): WeightUnit {
+  try { return localStorage.getItem(WEIGHT_UNIT_KEY) === 'kg' ? 'kg' : 'lb'; } catch { return 'lb'; }
+}
+export function useWeightUnit() {
+  const [unit, setUnit] = useState<WeightUnit>(loadWeightUnit);
+  const save = useCallback((u: WeightUnit) => {
+    setUnit(u);
+    try { localStorage.setItem(WEIGHT_UNIT_KEY, u); } catch { /* private mode */ }
+  }, []);
+  return [unit, save] as const;
 }

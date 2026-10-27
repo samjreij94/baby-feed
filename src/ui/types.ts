@@ -6,6 +6,7 @@ export type Side = 'L' | 'R';
 export type Milk = 'breast' | 'formula';
 export type FeedKind = 'breast' | 'bottle';
 export type Units = 'oz' | 'ml';
+export type WeightUnit = 'lb' | 'kg';
 export type NightPref = 'auto' | 'on' | 'off';
 export type RangeDays = 7 | 14 | 30;
 /** Charts range toggle: rolling 7/14/30 days (core metrics) or everything since the first feed (UI-aggregated). */
@@ -166,4 +167,21 @@ export interface NaraVM {
   /** caregiver name → member id */
   confirm(map: Record<string, string>): Promise<void>;
   reset(): void;
+}
+
+/* ---------- Weight tab ---------- */
+export interface WeightDraft { id?: string; at: number; grams: number }
+export interface WeightRowVM {
+  id: string; at: number; grams: number; ageDays: number; ageLabel: string;
+  /** Estimated WHO percentile (rounded), null past 24 months / before birth. */
+  percentile: number | null; by: PersonVM; draft: WeightDraft;
+}
+export interface WeightVM {
+  /** Newest first. */
+  rows: WeightRowVM[];
+  /** Chart points, oldest first (age in months from the birth date, 0..24 only). */
+  points: { id: string; months: number; grams: number }[];
+  /** Weight change since the previous entry (grams), null when fewer than two. */
+  gainG: number | null;
+  babyName: string | null;
 }

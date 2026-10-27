@@ -93,7 +93,20 @@ export interface HouseholdEntry extends EntryBase {
 
 export type Feed = BreastFeed | BottleFeed;
 /** Everything that travels over /api/sync. */
-export type Entry = Feed | MemberEntry | HouseholdEntry;
+/**
+ * A weight measurement (additive kind, syncs and deletes exactly like a feed: LWW + tombstones).
+ * The weight is stored as integer grams; lb/oz and kg are display/input conversions only.
+ */
+export interface WeightEntry extends EntryBase {
+  kind: 'weight';
+  /** When she was weighed. */
+  at: EpochMs;
+  /** Body weight in grams (100..30000). */
+  grams: number;
+  note?: string;
+}
+
+export type Entry = Feed | MemberEntry | HouseholdEntry | WeightEntry;
 
 /** Start time of any feed (breast: startedAt, bottle: at). */
 export type FeedStart = EpochMs;
@@ -244,6 +257,19 @@ export interface AddBottleInput {
   /** Default: now. */
   at?: EpochMs;
   milk?: MilkType;
+  note?: string;
+}
+
+export interface AddWeightInput {
+  grams: number;
+  /** Default: now. */
+  at?: EpochMs;
+  note?: string;
+}
+
+export interface WeightPatch {
+  grams?: number;
+  at?: EpochMs;
   note?: string;
 }
 

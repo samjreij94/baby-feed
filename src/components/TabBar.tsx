@@ -1,10 +1,11 @@
-import { IconChart, IconHistory, IconHome, IconSettings } from './Icons';
+import { IconChart, IconHistory, IconHome, IconScale, IconSettings } from './Icons';
 
-export type Tab = 'home' | 'history' | 'charts' | 'settings';
+export type Tab = 'home' | 'history' | 'charts' | 'weight' | 'settings';
 const TABS: { id: Tab; label: string; Icon: typeof IconHome }[] = [
   { id: 'home', label: 'Home', Icon: IconHome },
   { id: 'history', label: 'History', Icon: IconHistory },
   { id: 'charts', label: 'Charts', Icon: IconChart },
+  { id: 'weight', label: 'Weight', Icon: IconScale },
   { id: 'settings', label: 'Settings', Icon: IconSettings },
 ];
 

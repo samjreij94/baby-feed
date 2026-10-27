@@ -4,12 +4,14 @@
  */
 import { createApiClient, HttpError, NetworkError, type ApiClient, type FetchLike } from './api';
 import * as F from './feed';
+import { validGrams } from './weight';
 import { formatInviteCode, inviteLink, parseInvite } from './invite';
 import { compareVersion, nextUpdatedAt } from './merge';
 import { createIdbStorage, createMemoryStorage, defaultSyncKv, KEY, Mirror, type KvStorage, type PersistedMeta, type SyncKv } from './storage';
 import type {
   AddBottleInput,
   AddManualBreastInput,
+  AddWeightInput,
   BottleFeed,
   BreastFeed,
   Entry,
@@ -23,6 +25,8 @@ import type {
   Side,
   SyncResponse,
   SyncState,
+  WeightEntry,
+  WeightPatch,
 } from './types';
 
 /** Kept for compatibility; nothing throws it any more. */
@@ -43,6 +47,8 @@ export class ActiveFeedExistsError extends Error {
 export interface CoreSnapshot {
   /** Non-deleted feeds, newest start first. */
   feeds: Feed[];
+  /** Non-deleted weight entries, newest first. */
+  weights: WeightEntry[];
   members: Member[];
   me: Member | null;
   householdId: string | null;
@@ -216,6 +222,7 @@ export class FeedCore {
   private buildSnapshot(): CoreSnapshot {
     const all = [...this.entries.values()].filter((e) => !e.deleted);
     const feeds = all.filter((e): e is Feed => e.kind === 'breast' || e.kind === 'bottle').sort((a, b) => F.feedStart(b) - F.feedStart(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const weights = all.filter((e): e is WeightEntry => e.kind === 'weight').sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const members = all
       .filter((e): e is MemberEntry => e.kind === 'member')
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -224,6 +231,7 @@ export class FeedCore {
     const me = meId ? (members.find((m) => m.id === meId) ?? this.meta.me) : null;
     return {
       feeds,
+      weights,
       members,
       me,
       householdId: this.meta.householdId,
@@ -452,6 +460,26 @@ export class FeedCore {
     return this.put(next, cur);
   }
 
+  async addWeight(input: AddWeightInput): Promise<WeightEntry> {
+    await this.ready;
+    if (!validGrams(input.grams)) throw new Error('Weight must be between 0.1 kg and 30 kg');
+    const now = this.now();
+    const e: WeightEntry = { ...this.base(now), kind: 'weight', at: input.at ?? now, grams: Math.round(input.grams) };
+    if (input.note) e.note = input.note;
+    return this.put(e);
+  }
+
+  async editWeight(id: string, patch: WeightPatch): Promise<WeightEntry> {
+    await this.ready;
+    const cur = this.entries.get(id);
+    if (!cur || cur.deleted || cur.kind !== 'weight') throw new Error(`No weight ${id}`);
+    const next: WeightEntry = { ...cur, ...patch };
+    if (patch.grams !== undefined) next.grams = Math.round(patch.grams);
+    if (!validGrams(next.grams)) throw new Error('Weight must be between 0.1 kg and 30 kg');
+    return this.put(next, cur);
+  }
+
+  /** Tombstone a feed or weight (deleted: true; syncs). */
   async deleteEntry(id: string): Promise<void> {
     await this.ready;
     const cur = this.entries.get(id);

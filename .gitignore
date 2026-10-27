@@ -10,3 +10,6 @@ coverage
 # Test fixtures are inline strings; if a fixture file is ever needed, put it under a __tests__/fixtures/ dir.
 *.csv
 !**/__tests__/fixtures/*.csv
+
+# Backups of the household's sync data (private). Made by scripts/backup-sync.mjs.
+backups/

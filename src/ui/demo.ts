@@ -210,6 +210,9 @@ export async function bootDemoCore(): Promise<FeedCore> {
     busy = true;
     try {
       if (!demo.includes('fresh')) await seedHousehold(core, server);
+      if (demo.includes('weights') && !core.getSnapshot().weights.length) {
+        for (const [d, g] of [['2026-06-15', 2950], ['2026-07-14', 4100], ['2026-08-24', 5600], ['2026-10-20', 6700]] as const) await core.addWeight({ grams: g, at: new Date(`${d}T10:00:00`).getTime() }); // dev demo only
+      }
       if (demo.includes('remote')) await simulateRemoteFeed(core, server);
     } catch (e) { console.warn('[demo]', e); }
     // keep `busy` true: seeding/remote run once per page load

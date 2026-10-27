@@ -3,7 +3,7 @@ import { createContext, createElement, useCallback, useRef, useContext, useEffec
 import { activeFeedView, feedStart, lastFeedInfo } from './feed';
 import { computeMetrics } from './metrics';
 import { getCore, type CoreSnapshot, type FeedCore } from './store';
-import type { ImportResult, Member, ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, MetricsOptions, MetricsRange, Side, SyncView } from './types';
+import type { WeightEntry, ImportResult, Member, ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, MetricsOptions, MetricsRange, Side, SyncView } from './types';
 
 const Ctx = createContext<FeedCore | null>(null);
 
@@ -44,6 +44,23 @@ export function useFeeds(range?: FeedRange): Feed[] {
     const to = 'days' in range ? Infinity : (range.to ?? Infinity);
     return feeds.filter((f) => feedStart(f) >= from && feedStart(f) < to);
   }, [feeds, key, core]);
+}
+
+/** Non-deleted weights, newest first. */
+export function useWeights(): WeightEntry[] {
+  return useSnapshot().weights;
+}
+
+export function useWeightActions() {
+  const core = useCore();
+  return useMemo(
+    () => ({
+      addWeight: core.addWeight.bind(core),
+      editWeight: core.editWeight.bind(core),
+      deleteEntry: core.deleteEntry.bind(core),
+    }),
+    [core],
+  );
 }
 
 export interface ActiveFeedHook extends ActiveFeedView {

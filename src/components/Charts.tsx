@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
 /** Container width (ResizeObserver) so SVG text renders at true pixel size on every phone. */
-function useWidth<T extends HTMLElement>(fallback = 340) {
+export function useWidth<T extends HTMLElement>(fallback = 340) {
   const ref = useRef<T>(null);
   const [w, setW] = useState(fallback);
   useLayoutEffect(() => {
