@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { TimeField } from '../components/TimeField';
 import { PersonTag } from '../components/PersonChip';
 import { IconBottle, IconMoon, IconSun } from '../components/Icons';
 import { useClock, useHomeVM } from '../ui/adapter';
@@ -39,14 +40,18 @@ function useHomeFit(deps: unknown[]) {
 
 export function HomeScreen({ units, night, active, onToggleNight, onStart, onBottle, onOpenTimer, onAddName }: {
   units: Units; night: boolean; active: ActiveFeedVM | null;
-  onToggleNight: () => void; onStart: (s: Side) => void; onBottle: () => void; onOpenTimer: () => void; onAddName?: () => void;
+  onToggleNight: () => void; onStart: (s: Side, startedAt?: number) => void; onBottle: () => void; onOpenTimer: () => void; onAddName?: () => void;
 }) {
   const vm = useHomeVM(units);
   const now = useClock(30_000);
   const summary = vm.lastSummary;
   const ago = vm.sinceMs !== null ? fmtAgo(vm.sinceMs) : null;
   const dateLine = new Date(now).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
-  const fit = useHomeFit([!!active, vm.hasFeeds, vm.babyName]);
+  // "Started earlier?": optional start time for the next feed. Always 'now' unless the user picks otherwise.
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  const [earlier, setEarlier] = useState<number | null>(null);
+  const start = (s: Side) => { onStart(s, earlier !== null ? Math.min(earlier, Date.now()) : undefined); setEarlier(null); setEarlierOpen(false); };
+  const fit = useHomeFit([!!active, vm.hasFeeds, vm.babyName, earlierOpen]);
 
   return (
     <div className="screen home" data-testid="home" ref={fit.root}>
@@ -112,11 +117,21 @@ export function HomeScreen({ units, night, active, onToggleNight, onStart, onBot
             Back to timer · <span className="num">{fmtClock(active.elapsedMs)}</span>
           </button>
         ) : (
+          <>
+          {earlierOpen ? (
+            <div className="card earlier" data-testid="earlier">
+              <TimeField caption="Started at (default: now)" value={earlier ?? now} max={now}
+                onChange={(t) => setEarlier(Date.now() - t < 60_000 ? null : Math.min(t, Date.now()))} />
+              <button type="button" className="btn btn-quiet btn-sm" onClick={() => { setEarlier(null); setEarlierOpen(false); }}>Start now instead</button>
+            </div>
+          ) : (
+            <button type="button" className="btn btn-quiet btn-sm earlier-link" onClick={() => setEarlierOpen(true)} data-testid="started-earlier">Started earlier?</button>
+          )}
           <div className="side-buttons">
             {(['L', 'R'] as const).map((s) => {
               const sug = vm.nextSide === s;
               return (
-                <button key={s} type="button" className={`side-btn side-btn-${s}${sug ? ' suggested' : ''}`} onClick={() => onStart(s)} aria-label={`Start ${SIDE_NAME[s]} side${sug ? ' (suggested)' : ''}`}>
+                <button key={s} type="button" className={`side-btn side-btn-${s}${sug ? ' suggested' : ''}`} onClick={() => start(s)} aria-label={`Start ${SIDE_NAME[s]} side${sug ? ' (suggested)' : ''}`}>
                   <span className="side-letter">{s}</span>
                   <span className="side-name">{SIDE_NAME[s]}</span>
                   {sug && <span className="sug-tag">Suggested</span>}
@@ -124,6 +139,7 @@ export function HomeScreen({ units, night, active, onToggleNight, onStart, onBot
               );
             })}
           </div>
+          </>
         )}
         <button type="button" className="btn btn-bottle" onClick={onBottle}>
           <IconBottle /> Bottle

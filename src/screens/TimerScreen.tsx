@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { IconChevronDown, IconPause, IconPlay, IconStop, IconSwitch } from '../components/Icons';
 import { PersonChip } from '../components/PersonChip';
+import { StartTimeSheet } from '../components/StartTimeSheet';
 import { fmtClock, fmtTime } from '../ui/format';
 import { SIDE_NAME, type ActiveFeedVM } from '../ui/types';
 
-export function TimerScreen({ feed, disabled = false, onHide, onSwitch, onPause, onResume, onEnd, onEndOther, onDiscard }: {
-  feed: ActiveFeedVM; disabled?: boolean; onHide: () => void; onSwitch: () => void; onPause: () => void; onResume: () => void; onEnd: () => void; onEndOther: (id: string) => void; onDiscard: (id: string) => void;
+export function TimerScreen({ feed, disabled = false, onHide, onSetStart, onSwitch, onPause, onResume, onEnd, onEndOther, onDiscard }: {
+  feed: ActiveFeedVM; disabled?: boolean; onHide: () => void; onSetStart: (t: number) => Promise<void> | void; onSwitch: () => void; onPause: () => void; onResume: () => void; onEnd: () => void; onEndOther: (id: string) => void; onDiscard: (id: string) => void;
 }) {
   const [confirm, setConfirm] = useState<string | null>(null);
+  const [editStart, setEditStart] = useState(false);
   const paused = feed.status === 'paused';
   const other = feed.currentSide === 'L' ? 'R' : 'L';
   return (
@@ -44,6 +46,7 @@ export function TimerScreen({ feed, disabled = false, onHide, onSwitch, onPause,
         </div>
         <div className="clock num" aria-label={`Total ${fmtClock(feed.elapsedMs)}`} aria-live="off">{fmtClock(feed.elapsedMs)}</div>
         <div className="dim">Total · started {fmtTime(feed.startedAt)}</div>
+        <button type="button" className="btn btn-quiet btn-sm" disabled={disabled} onClick={() => setEditStart(true)} data-testid="edit-start">Started earlier?</button>
       </div>
 
       <div className="side-tiles">
@@ -68,6 +71,8 @@ export function TimerScreen({ feed, disabled = false, onHide, onSwitch, onPause,
           <button type="button" className="btn btn-lg btn-primary" disabled={disabled} onClick={onEnd}><IconStop /> End &amp; save</button>
         </div>
       </div>
+
+      <StartTimeSheet open={editStart} startedAt={feed.startedAt} onClose={() => setEditStart(false)} onSave={onSetStart} />
 
       {confirm && (
         <ConfirmDialog

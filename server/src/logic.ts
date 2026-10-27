@@ -122,6 +122,30 @@ export interface HouseholdStorage {
   /** Rows with seq > after, ascending, at most limit. */
   since(after: number, limit: number): Array<{ seq: number; entry: Entry }>;
   members(): Member[];
+  /** Live (not deleted) breast feeds whose status is 'running'. */
+  runningBreasts(): BreastFeedLike[];
+  /** Web-push subscriptions (separate table; never touches entries). */
+  putSub(sub: PushSub): void;
+  delSub(endpoint: string): void;
+  subs(): PushSub[];
+  /** Last reminder number already sent per feed id. */
+  getAlertN(feedId: string): number;
+  setAlertN(feedId: string, n: number): void;
+}
+
+export interface BreastFeedLike {
+  id: string;
+  status: string;
+  loggedBy: { id: string };
+  segments: Array<{ startedAt: number; endedAt: number | null }>;
+}
+
+export interface PushSub {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  /** Member (parent) who owns this device; reminders go to the phone of whoever started the feed. */
+  memberId: string;
 }
 
 export class MemoryHouseholdStorage implements HouseholdStorage {
@@ -154,6 +178,28 @@ export class MemoryHouseholdStorage implements HouseholdStorage {
       .map((r) => JSON.parse(r.json) as Entry)
       .filter((e) => e.kind === 'member' && !e.deleted)
       .map((e) => ({ id: e.id, name: (e as { name: string }).name }));
+  }
+  runningBreasts() {
+    return [...this.rows.values()]
+      .map((r) => JSON.parse(r.json) as Entry)
+      .filter((e) => e.kind === 'breast' && !e.deleted && (e as unknown as BreastFeedLike).status === 'running') as unknown as BreastFeedLike[];
+  }
+  private pushSubs = new Map<string, PushSub>();
+  private alertN = new Map<string, number>();
+  putSub(sub: PushSub) {
+    this.pushSubs.set(sub.endpoint, { ...sub });
+  }
+  delSub(endpoint: string) {
+    this.pushSubs.delete(endpoint);
+  }
+  subs() {
+    return [...this.pushSubs.values()].map((s) => ({ ...s }));
+  }
+  getAlertN(feedId: string) {
+    return this.alertN.get(feedId) ?? 0;
+  }
+  setAlertN(feedId: string, n: number) {
+    this.alertN.set(feedId, n);
   }
   get size() {
     return this.rows.size;
@@ -222,6 +268,94 @@ export class Household {
     const cursor = String(page.length ? page[page.length - 1]!.seq : Math.min(after, seq));
     return { status: 200, body: { changes: page.map((r) => r.entry), cursor, hasMore, serverNow: now, rejected } };
   }
+
+  // ── push reminders (additive: own tables, never touches entries) ──
+  addSub(raw: unknown): boolean {
+    const sub = validPushSub(raw);
+    if (!sub) return false;
+    this.store.putSub(sub);
+    return true;
+  }
+  removeSub(endpoint: string): void {
+    this.store.delSub(endpoint);
+  }
+  hasSubs(): boolean {
+    return this.store.subs().length > 0;
+  }
+
+  /** When the next reminder is due (epoch ms), or null if there is nothing to remind about. */
+  nextAlertAt(now: number): number | null {
+    if (!this.hasSubs()) return null;
+    let next: number | null = null;
+    for (const f of this.store.runningBreasts()) {
+      const e = nursingMs(f, now);
+      // Overdue (e.g. the start time was moved earlier) -> `at` is in the past and fires right away.
+      const n = this.store.getAlertN(f.id) + 1;
+      if (n > MAX_ALERTS) continue;
+      const at = now + (n * ALERT_EVERY_MS - e);
+      if (next === null || at < next) next = at;
+    }
+    return next;
+  }
+
+  /** Send every reminder that is due and return the next alarm time (or null). */
+  async runAlerts(now: number, send: PushSender): Promise<number | null> {
+    for (const f of this.store.runningBreasts()) {
+      const n = Math.min(Math.floor(nursingMs(f, now) / ALERT_EVERY_MS), MAX_ALERTS + 1);
+      if (n < 1 || n <= this.store.getAlertN(f.id)) continue;
+      this.store.setAlertN(f.id, n);
+      if (n > MAX_ALERTS) continue; // already way past: don't start buzzing now
+      const all = this.store.subs();
+      const mine = all.filter((s) => s.memberId === f.loggedBy.id);
+      for (const sub of mine.length ? mine : all) {
+        if ((await send(sub)) === 'gone') this.store.delSub(sub.endpoint);
+      }
+    }
+    return this.nextAlertAt(now);
+  }
+}
+
+// ── "Still feeding?" reminders ──
+/** A running breastfeeding timer gets a reminder at 15 min of nursing time, then every 15 min after. */
+export const ALERT_EVERY_MS = 15 * 60_000;
+/** Stop reminding after this many (2 h) so a forgotten timer doesn't buzz all night. */
+export const MAX_ALERTS = 8;
+
+/** Nursing time so far (sum of segments, the open one up to `now`; pauses excluded). */
+export function nursingMs(f: BreastFeedLike, now: number): number {
+  let t = 0;
+  for (const s of f.segments) t += Math.max(0, (s.endedAt ?? now) - s.startedAt);
+  return t;
+}
+
+/** Returns true when the push was delivered or should simply be retried later; 'gone' = subscription expired (delete it). */
+export type PushSender = (sub: PushSub) => Promise<'ok' | 'gone' | 'fail'>;
+
+export function validPushSub(x: unknown): PushSub | null {
+  if (!isObj(x)) return null;
+  const { endpoint, p256dh, auth, memberId } = x;
+  if (typeof endpoint !== 'string' || endpoint.length > 1024 || !isPushEndpoint(endpoint)) return null;
+  if (typeof p256dh !== 'string' || p256dh.length > 256 || typeof auth !== 'string' || auth.length > 128) return null;
+  if (typeof memberId !== 'string' || memberId.length > 64) return null;
+  return { endpoint, p256dh, auth, memberId };
+}
+
+/** Only real browser push services (the Worker fetches this URL, so never an arbitrary host). */
+export function isPushEndpoint(endpoint: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:') return false;
+  const h = u.hostname;
+  return (
+    h === 'fcm.googleapis.com' ||
+    h.endsWith('.push.apple.com') || h === 'push.apple.com' ||
+    h.endsWith('.push.services.mozilla.com') ||
+    h.endsWith('.notify.windows.com')
+  );
 }
 
 /** The RPC surface the router calls (Durable Object stub in prod, in-process object in tests). */
@@ -229,6 +363,8 @@ export interface HouseholdApi {
   create(secretHash: string): Promise<boolean>;
   join(secretHash: string): Promise<{ ok: true; members: Member[] } | { ok: false }>;
   sync(secretHash: string, householdId: string, body: unknown): Promise<SyncResult>;
+  pushSubscribe(secretHash: string, sub: unknown): Promise<boolean>;
+  pushUnsubscribe(secretHash: string, endpoint: string): Promise<boolean>;
 }
 
 /** Wrap a Household as a HouseholdApi (shared by the DO and the in-memory server). */
@@ -237,5 +373,7 @@ export function householdApi(h: Household, now: () => number): HouseholdApi {
     create: async (hash) => h.init(hash, now()),
     join: async (hash) => (h.authorize(hash) ? { ok: true, members: h.members() } : { ok: false }),
     sync: async (hash, id, body) => (h.authorize(hash) ? h.sync(id, body, now()) : { status: 401, body: { error: 'Invalid household code' } }),
+    pushSubscribe: async (hash, sub) => (h.authorize(hash) ? h.addSub(sub) : false),
+    pushUnsubscribe: async (hash, endpoint) => (h.authorize(hash) ? (h.removeSub(endpoint), true) : false),
   };
 }

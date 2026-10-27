@@ -13,7 +13,9 @@ import { WeightScreen } from './screens/WeightScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { TimerScreen } from './screens/TimerScreen';
 import { IconDrop } from './components/Icons';
-import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useBabyNameMigration, useHouseholdVM, useReady, useWeightActionsVM } from './ui/adapter';
+import { FeedAlreadyRunning, readJoinFromUrl, useActions, useActiveFeedVM, useBabyNameMigration, useHouseholdVM, useReady, useWeightActionsVM, usePushCtx } from './ui/adapter';
+import { ackCheckIn, skipNextCheckIn, StillFeedingPrompt } from './components/StillFeedingPrompt';
+import { enableReminders, refreshReminders, shouldAskOnStart } from './ui/notify';
 import { fmtClock } from './ui/format';
 import { usePrefs, useWeightUnit, useWhoSex } from './ui/prefs';
 import { useTheme } from './ui/theme';
@@ -57,6 +59,8 @@ export default function App() {
   const active = useActiveFeedVM();
   const act = useActions();
   const lastOz = useRef(3);
+  const push = usePushCtx();
+  useEffect(() => { if (push) void refreshReminders(push); }, [push]);
 
   // Timer closes itself when the feed ends (here or on the other phone).
   useEffect(() => {
@@ -80,6 +84,7 @@ export default function App() {
           feed={active}
           disabled={!ready}
           onHide={() => setTimerOpen(false)}
+          onSetStart={(t) => { ackCheckIn(active.id, Date.now() - t); return act.setStart(t).then(() => setToast('Start time updated'), (e) => { fail(e); throw e; }); }}
           onSwitch={() => void act.switchSide().catch(fail)}
           onPause={() => void act.pause().catch(fail)}
           onResume={() => void act.resume().catch(fail)}
@@ -101,7 +106,7 @@ export default function App() {
               night={night}
               active={active}
               onToggleNight={toggleNight}
-              onStart={(s) => void act.startFeed(s).then(() => setTimerOpen(true), (e) => { if (e instanceof FeedAlreadyRunning) { setTimerOpen(true); setToast('A feed is already running'); } else fail(e); })}
+              onStart={(s, at) => { if (push && shouldAskOnStart()) void enableReminders(push).catch(() => undefined); if (at !== undefined) skipNextCheckIn(); void act.startFeed(s, at).then(() => setTimerOpen(true), (e) => { if (e instanceof FeedAlreadyRunning) { setTimerOpen(true); setToast('A feed is already running'); } else fail(e); }); }}
               onBottle={() => setSheet({ mode: 'bottle', draft: newBottleDraft(lastOz.current) })}
               onOpenTimer={() => setTimerOpen(true)}
             />
@@ -165,6 +170,12 @@ export default function App() {
           onCancel={() => setDel(null)}
           onConfirm={() => { const id = del; setDel(null); setSheet(null); void act.deleteEntry(id).then(() => setToast('Feed deleted'), fail); }} />
       )}
+      <StillFeedingPrompt
+        feedId={active?.id ?? null}
+        running={active?.status === 'running'}
+        elapsedMs={active?.elapsedMs ?? 0}
+        onStop={() => { if (!active) return; const t = fmtClock(active.elapsedMs); void act.endFeed().then(() => setToast(`Feed saved · ${t}`), fail); }}
+      />
       <Toast text={toast} onDone={clearToast} />
     </div>
   );

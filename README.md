@@ -54,3 +54,11 @@ npm ci && npm run dev -- --host 127.0.0.1 --port 5173          # terminal 2: app
 Open `http://localhost:5173/baby-feed/` in profile 1 (create household), and the invite link (or code) in a
 second profile / incognito window (join). Each profile has its own IndexedDB = its own device.
 Server details and deploy: [`server/README.md`](server/README.md).
+
+## Still feeding? reminders and backdated starts
+
+- A running breastfeeding timer asks "Still feeding?" at 15 min of nursing, then every 15 min (pauses don't count). In the app it is a prompt (Keep going / Stop & save); in the background it is a web push sent by the sync worker (Durable Object alarm, cancelled when the feed ends, moved when the start time is edited). Push subscriptions live in the additive `push_subs` / `push_alerts` tables, never in entries.
+- VAPID: public key is `VAPID_PUBLIC` in `server/wrangler.jsonc`; the private key is the `VAPID_PRIVATE` worker secret (`wrangler secret put VAPID_PRIVATE`). Pushes carry no payload; `public/push-sw.js` (imported into the Workbox SW) shows the notification.
+- iPhone: iOS 16.4+, app added to the Home Screen, then Settings → "Still feeding? reminders" → Turn on.
+- "Started earlier?" on Home (before starting) and on a running timer sets the start time (never in the future, max 24 h back); elapsed and reminders use it and it syncs like any edit.
+- The app checks for a new service worker on launch/foreground/every 30 min and reloads once when a new one takes over.

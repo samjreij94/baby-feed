@@ -288,6 +288,13 @@ export function useHouseholdVM() {
   return [vm, actions] as const;
 }
 
+/** Push context for "Still feeding?" reminders (sync server URL + household code + this member). Null before joining. */
+export function usePushCtx(): import('./notify').PushCtx | null {
+  const core = useCore();
+  const h = useHousehold();
+  return useMemo(() => (h.inviteCode && h.me ? { apiBase: core.apiBaseUrl, code: h.inviteCode, memberId: h.me.id } : null), [core, h.inviteCode, h.me]);
+}
+
 /** Validates a typed code or invite link. */
 export const isValidJoin = (codeOrLink: string) => parseInvite(codeOrLink) !== null;
 /** Invite code from `#join=CODE` (core's link format) or `?join=CODE` on app open. */
@@ -414,9 +421,11 @@ export function useActions() {
   const fa = useFeedActions();
   const blocked = useBlocked();
   return gateActions(blocked, {
-    startFeed: async (side: Side) => {
-      try { await a.startBreast(side); } catch (e) { if (e instanceof ActiveFeedExistsError) throw new FeedAlreadyRunning(e.message); throw e; }
+    startFeed: async (side: Side, startedAt?: number) => {
+      try { await a.startBreast(side, startedAt === undefined ? undefined : { startedAt: Math.min(startedAt, Date.now()) }); } catch (e) { if (e instanceof ActiveFeedExistsError) throw new FeedAlreadyRunning(e.message); throw e; }
     },
+    /** Change the running feed's start time (never in the future); elapsed + reminders follow it. */
+    setStart: async (t: number) => { await a.setStart(t); },
     switchSide: async () => { await a.switchSide(); },
     pause: async () => { await a.pause(); },
     resume: async () => { await a.resume(); },

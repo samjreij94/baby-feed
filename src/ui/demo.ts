@@ -12,7 +12,7 @@
  */
 import { FeedCore, type BreastFeed, type Entry, type Feed, type Member, type Side } from '../core';
 import { handleRequest, type AppDeps } from '../../server/src/app.ts';
-import { Household, householdApi, type HouseholdMeta, type HouseholdStorage } from '../../server/src/logic.ts';
+import { Household, householdApi, type HouseholdMeta, type HouseholdStorage, type PushSub } from '../../server/src/logic.ts';
 
 import { DEMO_BABY, clearLegacyBabyName } from './prefs';
 
@@ -56,6 +56,17 @@ class LocalHouseholdStorage implements HouseholdStorage {
   members() {
     return Object.values(this.rows).map((r) => JSON.parse(r.json) as Entry).filter((e) => e.kind === 'member' && !e.deleted).map((e) => ({ id: e.id, name: (e as { name: string }).name }));
   }
+  // Web push isn't simulated in the demo server: reminders are in-memory only.
+  private subs_ = new Map<string, PushSub>();
+  private alerts = new Map<string, number>();
+  runningBreasts() {
+    return Object.values(this.rows).map((r) => JSON.parse(r.json) as Entry).filter((e): e is BreastFeed => e.kind === 'breast' && !e.deleted && e.status === 'running') as unknown as ReturnType<HouseholdStorage['runningBreasts']>;
+  }
+  putSub(sub: PushSub) { this.subs_.set(sub.endpoint, sub); }
+  delSub(endpoint: string) { this.subs_.delete(endpoint); }
+  subs() { return [...this.subs_.values()]; }
+  getAlertN(feedId: string) { return this.alerts.get(feedId) ?? 0; }
+  setAlertN(feedId: string, n: number) { this.alerts.set(feedId, n); }
   flush() { if (this.dirty) { try { this.kv?.setItem(this.key, JSON.stringify({ meta: this.meta, rows: this.rows })); } catch { /* quota */ } this.dirty = false; } }
 }
 

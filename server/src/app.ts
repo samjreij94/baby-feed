@@ -3,6 +3,9 @@
  *   POST /api/households        -> { householdId, secret }                 (rate limited: create)
  *   POST /api/households/join   Bearer secret -> { householdId, members }  (rate limited: join; 401 unknown)
  *   POST /api/sync              Bearer secret, SyncRequest -> SyncResponse (401 bad secret)
+ *   POST /api/push/key          Bearer secret -> { publicKey }           (VAPID public key for Push API subscribe)
+ *   POST /api/push/subscribe    Bearer secret, { endpoint, p256dh, auth, memberId } -> { ok }
+ *   POST /api/push/unsubscribe  Bearer secret, { endpoint } -> { ok }
  *   GET  /health                -> "ok"
  */
 import { generateInviteCode, isValidInviteCode, normalizeInviteCode } from '../../src/core/invite.ts';
@@ -81,6 +84,28 @@ export async function handleRequest(req: Request, env: HttpEnv, deps: AppDeps): 
     if (!body.ok) return json(req, env, { error: body.status === 413 ? 'Payload too large' : 'Bad JSON' }, body.status);
     const r = await deps.households(s.householdId).sync(s.hash, s.householdId, body.value);
     return json(req, env, r.body, r.status);
+  }
+
+  if (path === '/api/push/key' || path === '/api/push/subscribe' || path === '/api/push/unsubscribe') {
+    if (!deps.rateLimit('sync', clientIp(req))) return tooMany(req, env);
+    const s = await resolveSecret(bearer(req));
+    if (!s) return json(req, env, { error: 'Invalid household code' }, 401);
+    if (path === '/api/push/key') {
+      if (!env.VAPID_PUBLIC) return json(req, env, { error: 'Push not configured' }, 503);
+      return json(req, env, { publicKey: env.VAPID_PUBLIC });
+    }
+    const body = await readBody(req);
+    if (!body.ok) return json(req, env, { error: 'Bad JSON' }, body.status);
+    const h = deps.households(s.householdId);
+    if (path === '/api/push/subscribe') {
+      const v = body.value as Record<string, unknown>;
+      const ok = await h.pushSubscribe(s.hash, v);
+      return ok ? json(req, env, { ok: true }) : json(req, env, { error: 'Bad subscription' }, 400);
+    }
+    const endpoint = (body.value as { endpoint?: unknown }).endpoint;
+    if (typeof endpoint !== 'string') return json(req, env, { error: 'Bad endpoint' }, 400);
+    const ok = await h.pushUnsubscribe(s.hash, endpoint);
+    return ok ? json(req, env, { ok: true }) : json(req, env, { error: 'Invalid household code' }, 401);
   }
 
   return json(req, env, { error: 'Not found' }, 404);

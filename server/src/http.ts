@@ -1,6 +1,8 @@
 /** Pure HTTP helpers (CORS, Origin allow-list, rate limit) — no Workers-only imports. Patterned on poker-coach/server. */
 export interface HttpEnv {
   ALLOWED_ORIGINS?: string;
+  /** VAPID public key (base64url) the browser subscribes with. Public. */
+  VAPID_PUBLIC?: string;
 }
 
 function allowedOrigins(env: HttpEnv): string[] {

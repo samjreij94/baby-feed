@@ -503,3 +503,9 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 [data-theme='night'] .side-btn-R .sug-tag { background: #c4836a; color: var(--on-accent); }
 .stepper { grid-template-columns: 64px 10px 1fr 10px 64px; gap: 0; }
 .step-gap { align-self: stretch; }
+
+/* Started earlier? */
+.earlier-link { align-self: center; min-height: 32px; }
+.earlier { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.timer-main .btn-sm { margin-top: 6px; }
+.reminder-note { margin-top: 6px; }

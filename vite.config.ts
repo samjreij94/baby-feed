@@ -20,6 +20,8 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,
+        // Web-push handlers ("Still feeding?" reminders) live in public/push-sw.js
+        importScripts: ['push-sw.js'],
       },
       devOptions: { enabled: false },
     }) as never,

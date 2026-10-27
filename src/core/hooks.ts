@@ -65,6 +65,8 @@ export function useWeightActions() {
 
 export interface ActiveFeedHook extends ActiveFeedView {
   startBreast(side: Side, opts?: { startedAt?: number }): Promise<BreastFeed>;
+  /** Move the active feed's start earlier (forgot to start the timer). Never in the future. */
+  setStart(startedAt: number): Promise<BreastFeed | null>;
   switchSide(): Promise<BreastFeed | null>;
   pause(): Promise<BreastFeed | null>;
   resume(): Promise<BreastFeed | null>;
@@ -82,6 +84,7 @@ export function useActiveFeed(): ActiveFeedHook {
   return {
     ...view,
     startBreast: (side, opts) => core.startBreast(side, opts),
+    setStart: (t) => core.setActiveStart(t),
     switchSide: () => core.switchSide(),
     pause: () => core.pause(),
     resume: () => core.resume(),

@@ -10,6 +10,8 @@
   "vars": {
     // Browser origins allowed for CORS (comma-separated; "*" = any).
     // GitHub Pages prod + Vite dev (5173) + Vite preview (4173).
+    // Web-push VAPID public key (the private half is the VAPID_PRIVATE worker secret).
+    "VAPID_PUBLIC": "BGY7DlztNbgNgB7BLpfgAM58wyx_hpdnWnj2EzWBkL479g_gkRqZTk4FwIwxzbzW6B4IxGGknVXMPChRI4obX7w",
     "ALLOWED_ORIGINS": "https://samjreij94.github.io,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
   },
   "observability": { "enabled": true }

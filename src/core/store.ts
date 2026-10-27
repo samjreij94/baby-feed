@@ -391,6 +391,24 @@ export class FeedCore {
     const now = this.now();
     return this.put({ ...this.base(now), ...F.startFields(side, opts.startedAt ?? now) });
   }
+  /**
+   * Change when the active feed started (forgot to start the timer). Moves the feed's startedAt and its first
+   * segment's start, so elapsed time (and the 15-min reminder) use the new start. Never in the future, at most
+   * 24 h back, and not after the first side ended. Syncs like any edit.
+   */
+  async setActiveStart(startedAt: number): Promise<BreastFeed | null> {
+    await this.ready;
+    const cur = this.active();
+    if (!cur) return null;
+    const now = this.now();
+    if (!Number.isFinite(startedAt)) throw new Error('Pick a start time.');
+    const at = Math.min(Math.round(startedAt), now);
+    if (at < now - 24 * 3_600_000) throw new Error('Start time can’t be more than 24 hours ago.');
+    const first = cur.segments[0]!;
+    if (at > (first.endedAt ?? now)) throw new Error('Start time can’t be after the first side ended.');
+    if (at === cur.startedAt && at === first.startedAt) return cur;
+    return this.put({ ...cur, startedAt: at, segments: [{ ...first, startedAt: at }, ...cur.segments.slice(1)] }, cur);
+  }
   switchSide() {
     return this.updateActive(F.switchSide);
   }

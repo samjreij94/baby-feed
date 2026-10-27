@@ -4,10 +4,51 @@ import { IconChevronRight } from '../components/Icons';
 import { InviteCard } from '../components/InviteCard';
 import { PersonChip } from '../components/PersonChip';
 import { Segmented } from '../components/Segmented';
-import { useHouseholdVM, useSyncVM } from '../ui/adapter';
+import { useHouseholdVM, usePushCtx, useSyncVM } from '../ui/adapter';
+import { disableReminders, enableReminders, reminderState, showTestNotification, type ReminderState } from '../ui/notify';
 import type { NightPref, Prefs } from '../ui/types';
 
 const NIGHT_OPTS = [{ value: 'auto', label: 'Auto' }, { value: 'on', label: 'On' }, { value: 'off', label: 'Off' }] as const;
+
+const REMINDER_TEXT: Record<ReminderState, string> = {
+  on: 'On. You’ll get a “Still feeding?” alert on this phone after 15 minutes of nursing, then every 15 minutes.',
+  off: 'Off. Turn on to get a “Still feeding?” alert when a breastfeeding timer runs 15+ minutes.',
+  denied: 'Blocked. Allow notifications for Baby Feed in iPhone Settings → Notifications, then come back.',
+  'needs-install': 'On iPhone, reminders only work from the Home Screen app: in Safari tap Share → Add to Home Screen, open it from there, then turn this on.',
+  unsupported: 'This browser can’t show background reminders. You’ll still get the in-app “Still feeding?” prompt.',
+};
+
+function ReminderCard() {
+  const push = usePushCtx();
+  const [state, setState] = useState<ReminderState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { void reminderState().then(setState); }, []);
+  if (!state) return null;
+  const run = async (fn: () => Promise<ReminderState>) => {
+    setBusy(true); setErr(null);
+    try { setState(await fn()); } catch (e) { setErr(e instanceof Error ? e.message : 'Something went wrong'); } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <h2 className="section">Still feeding? reminders</h2>
+      <div className="card stack">
+        <div className="dim small" data-testid="reminder-text">{REMINDER_TEXT[state]}</div>
+        {err && <div className="small" role="alert">{err}</div>}
+        <div className="row">
+          {state === 'on' ? (
+            <>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void showTestNotification().catch(() => setErr('Couldn’t show a test notification.'))}>Send test</button>
+              <button type="button" className="btn btn-sm btn-quiet" disabled={busy || !push} onClick={() => push && void run(() => disableReminders(push))}>Turn off</button>
+            </>
+          ) : state === 'off' ? (
+            <button type="button" className="btn btn-primary btn-sm" disabled={busy || !push} onClick={() => push && void run(() => enableReminders(push))}>Turn on reminders</button>
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
 
 /** Text field that saves on blur / Enter. Caption is a <div>. */
 function SaveField({ caption, value, placeholder, autoFocus, onSave }: { caption: string; value: string; placeholder?: string; autoFocus?: boolean; onSave: (v: string) => void }) {
@@ -43,6 +84,8 @@ export function SettingsScreen({ prefs, night, onPrefs, onLeft, onImport, focusB
         <Segmented label="Night mode" value={prefs.night} options={NIGHT_OPTS} onChange={(n: NightPref) => onPrefs({ night: n })} />
         <div className="dim small">{prefs.night === 'auto' ? `Dims automatically from 8 PM to 7 AM. ${night ? 'Night colours are on now.' : 'Day colours are on now.'}` : prefs.night === 'on' ? 'Night colours stay on.' : 'Day colours stay on.'}</div>
       </div>
+
+      <ReminderCard />
 
       <h2 className="section">Household</h2>
       <div className="card stack-lg">
