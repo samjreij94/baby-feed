@@ -151,6 +151,9 @@ describe('Sleep tab', () => {
     expect(cssText).toMatch(/\.sleep-int \{ min-height: var\(--tap\);/);
     expect(cssText).toMatch(/\.tabbar button \{[^}]*min-height: 48px/);
     expect(cssText).toMatch(/\.sleep-note-input \{[^}]*min-height: 96px/);
+    expect(cssText).toMatch(/\.sleep-undo-btn \{[^}]*min-height: var\(--tap-lg\)/);
+    expect(cssText).toMatch(/\.sleep-event-del \{[^}]*min-height: var\(--tap\)/);
+    expect(cssText).toMatch(/\.earlier-link \{[^}]*min-height: var\(--tap\)/);
   });
 
   it('hides Note until a session is open, then saves a note on the session', async () => {
@@ -174,7 +177,7 @@ describe('Sleep tab', () => {
     await act(async () => { fireEvent.change(input, { target: { value: 'Pacifier fell out' } }); });
     await act(async () => { fireEvent.click(within(sheet).getByRole('button', { name: 'Save note' })); });
 
-    expect(await screen.findByTestId('sleep-notes')).toHaveTextContent('Pacifier fell out');
+    expect(await screen.findByTestId('sleep-events')).toHaveTextContent('Pacifier fell out');
     expect(screen.queryByRole('dialog', { name: 'Note' })).toBeNull();
     const sess = t.core.getSnapshot().sleepSessions[0]!;
     expect(sess.events.some((e) => e.kind === 'note' && e.text === 'Pacifier fell out')).toBe(true);
@@ -186,4 +189,87 @@ describe('Sleep tab', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'History' }));
     expect(await screen.findByTestId('sleep-hist-notes')).toHaveTextContent('Pacifier fell out');
   });
+
+  it('keeps Stop crying visible when a check is due', async () => {
+    const t = testCore();
+    await t.core.createHousehold('Samir');
+    const now = t.core.now();
+    await t.core.setSleepPlan({ startDate: localDateKey(now) });
+    const session = await t.core.startSleepSession({ type: 'night', startedAt: now - 3 * MIN, putDownAt: now - 3 * MIN });
+    await t.core.addSleepEvent(session.id, 'cry_start', { at: now - 3 * MIN });
+    renderApp(t.core);
+    await openSleep();
+    expect(await screen.findByTestId('sleep-goin')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop crying' })).toBeInTheDocument();
+  });
+
+  it('offers Undo after a Tonight event tap and deleteSleepEvent restores the timer', async () => {
+    const t = testCore();
+    await t.core.createHousehold('Samir');
+    renderApp(t.core);
+    await openSleep();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start bedtime / Put down' })); });
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Planned feed' })); });
+    const toast = await screen.findByTestId('sleep-undo');
+    expect(toast).toHaveTextContent(/Planned feed/);
+    expect(screen.getByTestId('sleep-events')).toHaveTextContent(/Planned feed/);
+    const ev = t.core.getSnapshot().sleepSessions[0]!.events.find((e) => e.kind === 'planned_night_feed' && !e.deleted);
+    expect(ev).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })); });
+    expect(screen.queryByTestId('sleep-undo')).toBeNull();
+    expect(screen.queryByTestId('sleep-events')).toBeNull();
+    const after = t.core.getSnapshot().sleepSessions[0]!.events.find((e) => e.id === ev!.id);
+    expect(after?.deleted).toBe(true);
+  });
+
+  it('undoes check_start and returns to the waiting / go-in prompt', async () => {
+    const t = testCore();
+    await t.core.createHousehold('Samir');
+    const now = t.core.now();
+    await t.core.setSleepPlan({ startDate: localDateKey(now) });
+    const session = await t.core.startSleepSession({ type: 'night', startedAt: now - 3 * MIN, putDownAt: now - 3 * MIN });
+    await t.core.addSleepEvent(session.id, 'cry_start', { at: now - 3 * MIN });
+    renderApp(t.core);
+    await openSleep();
+    expect(await screen.findByRole('button', { name: /I’m going in/ })).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /I’m going in/ })); });
+    expect(await screen.findByRole('button', { name: /Check done, I’ve left/ })).toBeInTheDocument();
+    expect(screen.getByTestId('sleep-undo')).toHaveTextContent(/Went in for a check/);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })); });
+    expect(await screen.findByRole('button', { name: /I’m going in/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Check done, I’ve left/ })).toBeNull();
+  });
+
+  it('deletes an event from the session event list', async () => {
+    const t = testCore();
+    await t.core.createHousehold('Samir');
+    renderApp(t.core);
+    await openSleep();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start bedtime / Put down' })); });
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Planned feed' })); });
+    expect(await screen.findByTestId('sleep-events')).toHaveTextContent(/Planned feed/);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete Planned feed logged' })); });
+    expect(screen.queryByTestId('sleep-events')).toBeNull();
+    const evs = t.core.getSnapshot().sleepSessions[0]!.events.filter((e) => e.kind === 'planned_night_feed');
+    expect(evs.every((e) => e.deleted)).toBe(true);
+  });
+
+  it('History labels a night by the plan evening date, not the calendar start date', async () => {
+    const t = testCore();
+    await t.core.createHousehold('Samir');
+    // startDate Nov 16 → 00:15 on Nov 19 belongs to the Nov 18 evening (Night 3).
+    const start = new Date(2026, 10, 19, 0, 15, 0).getTime();
+    await t.core.setSleepPlan({ startDate: '2026-11-16' });
+    const session = await t.core.startSleepSession({ type: 'night', startedAt: start, putDownAt: start });
+    await t.core.endSleepSession(session.id, start + 60_000);
+    renderApp(t.core);
+    await openSleep();
+    fireEvent.click(screen.getByRole('radio', { name: 'History' }));
+    const hist = await screen.findByTestId('sleep-history');
+    expect(hist).toHaveTextContent('Night 3');
+    expect(hist).toHaveTextContent('Nov 18, 2026');
+    expect(hist).toHaveTextContent(/12:15\sAM/);
+    expect(hist).not.toHaveTextContent('Nov 19');
+  });
+
 });

@@ -62,6 +62,9 @@ const keyToDate = (key: string) => {
   return new Date(y!, m! - 1, d!);
 };
 
+/** Format a local `YYYY-MM-DD` (e.g. a night's evening date) like `fmtDay`. */
+export const fmtDayKey = (key: string) => keyToDate(key).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
 export function dayLabel(key: string, now: number): string {
   if (key === dateKey(now)) return 'Today';
   if (key === dateKey(addDays(startOfDay(now), -1))) return 'Yesterday';

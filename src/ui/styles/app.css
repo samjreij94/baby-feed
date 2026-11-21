@@ -96,7 +96,7 @@ body {
   transition: background-color .4s ease, color .4s ease;
 }
 #root { min-height: 100dvh; }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; touch-action: manipulation; }
 button:disabled { opacity: .45; cursor: default; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -505,20 +505,35 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .step-gap { align-self: stretch; }
 
 /* Started earlier? */
-.earlier-link { align-self: center; min-height: 32px; }
+.earlier-link { align-self: center; min-height: var(--tap); }
 .earlier { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .timer-main .btn-sm { margin-top: 6px; }
 .reminder-note { margin-top: 6px; }
 
 
 /* ---------- Sleep training ---------- */
-.sleep-screen { --sleep: #c45c3e; --sleep-ink: #8d3e28; --sleep-soft: #f6e4dc; --sleep-amber: #c48a3a; --sleep-amber-soft: #f6ead3; }
+.sleep-screen {
+  --sleep: #b04a32; /* ≥4.5:1 with --on-accent on the Stop crying button */
+  --sleep-ink: #8d3e28;
+  --sleep-soft: #f6e4dc;
+  --sleep-amber: #8a5a14; /* ≥4.5:1 countdown on --surface / --bg */
+  --sleep-amber-soft: #f6ead3;
+  color: var(--text);
+  background-color: var(--bg);
+  min-height: 100dvh;
+}
 [data-theme='night'] .sleep-screen {
   --sleep: #e08a6a; --sleep-ink: #ecc2a8; --sleep-soft: #3a221c; --sleep-amber: #e0a85a; --sleep-amber-soft: #3a2a16;
 }
+/* Dim redefines tokens on this element so color/background above re-resolve here,
+   instead of inheriting body's already-computed day colour (BUG-3). */
 .sleep-screen.is-dim {
   --bg: #100c08; --surface: #18120c; --surface-2: #211910; --surface-3: #2a2016;
-  --text: #c9ae8e; --text-dim: #9a8166; --border: #2a2016;
+  --text: #c9ae8e; --text-dim: #a89074; --border: #2a2016;
+  --sleep: #e08a6a; --sleep-ink: #ecc2a8; --sleep-soft: #3a221c; --sleep-amber: #e0a85a; --sleep-amber-soft: #3a2a16;
+  --accent: #b9824a; --accent-press: #a5723f; --accent-soft: #33251a; --on-accent: #1b120a;
+  --danger: #d6806c; --danger-soft: #3a211b; --L-ink: #d0b07e;
+  color-scheme: dark;
 }
 .sleep-screen h2 { font-size: 17px; margin: 0 0 10px; font-weight: 650; }
 .sleep-tonight { margin-top: 8px; }
@@ -579,7 +594,32 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .sleep-note-time { display: block; font-size: 12px; font-weight: 650; color: var(--text-dim); margin-bottom: 2px; font-variant-numeric: tabular-nums; }
 .sleep-note-input {
   min-height: 96px; height: auto; padding: 12px 14px; resize: vertical;
-  line-height: 1.35; color: var(--text);
+  line-height: 1.35; color: var(--text); font-family: inherit; font-size: 17px;
+}
+.sleep-events { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sleep-event {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface-2); border-radius: var(--radius-sm); padding: 6px 6px 6px 12px;
+  color: var(--text);
+}
+.sleep-event-main { flex: 1; min-width: 0; font-size: 15px; line-height: 1.35; }
+.sleep-event-del { flex: none; min-height: var(--tap); min-width: var(--tap); padding: 0 12px; }
+.sleep-undo {
+  position: fixed; left: 50%; z-index: 45;
+  bottom: calc(var(--tabbar-h) + var(--safe-b) + 12px);
+  transform: translateX(-50%);
+  width: calc(100% - 32px); max-width: 448px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 8px 8px 16px;
+  background: var(--text); color: var(--bg);
+  border-radius: var(--radius-md); font-weight: 650; font-size: 16px;
+  box-shadow: var(--shadow);
+}
+.sleep-undo-btn {
+  margin-left: auto; flex: none;
+  min-height: var(--tap-lg); min-width: 88px; padding: 0 18px;
+  background: var(--bg); color: var(--text); border: 0; border-radius: var(--radius-sm);
+  font-weight: 700;
 }
 .sleep-hist-row { flex-direction: column; align-items: stretch; }
 .sleep-notes-hist { margin: 0 12px 10px 52px; }

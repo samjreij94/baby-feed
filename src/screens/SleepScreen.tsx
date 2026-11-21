@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BarChart, LineChart, niceMinutes } from '../components/Charts';
 import { BottomSheet } from '../components/BottomSheet';
 import { IconMoon } from '../components/Icons';
@@ -20,7 +20,7 @@ import {
   type SleepTimerState,
 } from '../core';
 import { useClock } from '../ui/adapter';
-import { fmtDay, fmtMin, fmtMinShort, fmtTime } from '../ui/format';
+import { fmtDayKey, fmtMin, fmtMinShort, fmtTime } from '../ui/format';
 import { FERBER_RULES, fmtAgoPhrase, fmtCountdown, minutesToTimeInput, remoteSleepLine, timeInputToMinutes } from '../ui/sleep';
 
 type Pane = 'tonight' | 'plan' | 'history';
@@ -37,13 +37,37 @@ function loadDim(): boolean {
 
 const NOTE_MAX = 1000;
 
-function liveNotes(session: SleepSession | null | undefined): SleepEvent[] {
+function liveEvents(session: SleepSession | null | undefined): SleepEvent[] {
   if (!session) return [];
   return session.events
-    .filter((e) => e.kind === 'note' && !e.deleted && (e.text ?? '').trim())
+    .filter((e) => !e.deleted)
     .slice()
     .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
+
+function liveNotes(session: SleepSession | null | undefined): SleepEvent[] {
+  return liveEvents(session).filter((e) => e.kind === 'note' && (e.text ?? '').trim());
+}
+
+const EVENT_LABEL: Record<SleepEventKind, string> = {
+  cry_start: 'Crying started',
+  cry_stop: 'Crying stopped',
+  check_start: 'Went in for a check',
+  check_end: 'Check done, left the room',
+  night_waking: 'Night waking logged',
+  planned_night_feed: 'Planned feed logged',
+  note: 'Note saved',
+  asleep: 'Marked asleep',
+};
+
+function eventTitle(ev: SleepEvent): string {
+  if (ev.kind === 'note') return ev.text?.trim() || 'Note saved';
+  return EVENT_LABEL[ev.kind];
+}
+
+const UNDO_MS = 6000;
+
+type UndoToast = { sessionId: string; eventId: string; label: string };
 
 export function SleepScreen() {
   const [pane, setPane] = useState<Pane>(() => {
@@ -89,19 +113,44 @@ function TonightPanel() {
   const [prefer, setPrefer] = useState<SleepSessionType>('night');
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [undo, setUndo] = useState<UndoToast | null>(null);
   const fail = (e: unknown) => console.warn('[sleep]', e);
   const id = session?.id;
+  useEffect(() => {
+    if (!undo) return;
+    const t = window.setTimeout(() => setUndo(null), UNDO_MS);
+    return () => window.clearTimeout(t);
+  }, [undo]);
+  const offerUndo = (next: SleepSession, kind: SleepEventKind, before: Set<string>) => {
+    const ev = [...next.events].reverse().find((e) => e.kind === kind && !e.deleted && !before.has(e.id));
+    if (ev) setUndo({ sessionId: next.id, eventId: ev.id, label: eventTitle(ev) });
+  };
+  const afterEvent = (kind: SleepEventKind) => {
+    const before = new Set((session?.events ?? []).map((e) => e.id));
+    return (next: SleepSession) => offerUndo(next, kind, before);
+  };
   const go = (kind: SleepEventKind) => {
     if (!id) return Promise.resolve();
-    return sleep.addSleepEvent(id, kind).catch(fail);
+    return sleep.addSleepEvent(id, kind).then(afterEvent(kind)).catch(fail);
   };
   const closeNote = () => { setNoteOpen(false); setNoteText(''); };
   const saveNote = () => {
     const text = noteText.trim().slice(0, NOTE_MAX);
     if (!id || !text) return Promise.resolve();
-    return sleep.addSleepEvent(id, 'note', { text }).then(closeNote).catch(fail);
+    return sleep.addSleepEvent(id, 'note', { text }).then((next) => { closeNote(); afterEvent('note')(next); }).catch(fail);
   };
-  const notes = liveNotes(session);
+  const undoLast = () => {
+    if (!undo) return Promise.resolve();
+    const cur = undo;
+    return sleep.deleteSleepEvent(cur.sessionId, cur.eventId).then(() => setUndo(null)).catch(fail);
+  };
+  const removeEvent = (eventId: string) => {
+    if (!id) return Promise.resolve();
+    return sleep.deleteSleepEvent(id, eventId).then(() => {
+      setUndo((u) => (u && u.eventId === eventId ? null : u));
+    }).catch(fail);
+  };
+  const events = liveEvents(session);
 
   const phase = timer?.phase ?? 'idle';
   const idle = !session;
@@ -208,7 +257,7 @@ function TonightPanel() {
           </button>
         )}
 
-        {session && phase !== 'asleep' && phase !== 'ended' && phase !== 'checking' && phase !== 'pre_putdown' && !due && (
+        {session && phase !== 'asleep' && phase !== 'ended' && phase !== 'checking' && phase !== 'pre_putdown' && (
           <button
             type="button"
             className={`btn btn-xl sleep-hero-btn sleep-cry-btn${phase === 'crying' ? ' is-on' : ''}`}
@@ -222,7 +271,7 @@ function TonightPanel() {
         {session && phase !== 'ended' && (
           <div className="sleep-grid">
             {phase !== 'asleep' && id && (
-              <button type="button" className="btn sleep-grid-btn" onClick={() => sleep.markAsleep(id).catch(fail)}>Asleep</button>
+              <button type="button" className="btn sleep-grid-btn" onClick={() => sleep.markAsleep(id).then(afterEvent('asleep')).catch(fail)}>Asleep</button>
             )}
             {mode === 'night' && (
               <button type="button" className="btn sleep-grid-btn" onClick={() => go('night_waking')}>Night waking</button>
@@ -238,15 +287,32 @@ function TonightPanel() {
         )}
       </div>
 
-      {notes.length > 0 && (
-        <ul className="sleep-notes" data-testid="sleep-notes">
-          {notes.map((n) => (
-            <li key={n.id}>
-              <span className="sleep-note-time">{fmtTime(n.at)}</span>
-              <span>{n.text}</span>
+      {events.length > 0 && (
+        <ul className="sleep-events" data-testid="sleep-events">
+          {events.map((ev) => (
+            <li key={ev.id} className="sleep-event">
+              <div className="sleep-event-main">
+                <span className="sleep-note-time">{fmtTime(ev.at)}</span>
+                <span>{eventTitle(ev)}</span>
+              </div>
+              <button
+                type="button"
+                className="btn btn-quiet sleep-event-del"
+                aria-label={`Delete ${eventTitle(ev)}`}
+                onClick={() => removeEvent(ev.id)}
+              >
+                Delete
+              </button>
             </li>
           ))}
         </ul>
+      )}
+
+      {undo && (
+        <div className="sleep-undo" role="status" data-testid="sleep-undo">
+          <span>{undo.label}</span>
+          <button type="button" className="sleep-undo-btn" onClick={() => undoLast()}>Undo</button>
+        </div>
       )}
 
       <BottomSheet
@@ -450,7 +516,7 @@ function SummaryRow({ row, notes }: { row: SleepSessionMetrics; notes: SleepEven
           <span className="h-detail h-wrap dim">{detail}</span>
         </span>
         <span className="h-when">
-          <span className="num">{fmtDay(row.startedAt)}</span>
+          <span className="num">{fmtDayKey(row.date)}</span>
           <span className="dim num">{fmtTime(row.startedAt)}</span>
         </span>
       </div>
@@ -472,7 +538,7 @@ function NightCharts({ nights }: { nights: SleepSessionMetrics[] }) {
   const days = nights.map((r) => ({
     key: r.sessionId,
     tick: `N${r.nightNumber}`,
-    label: `Night ${r.nightNumber}, ${fmtDay(r.startedAt)}`,
+    label: `Night ${r.nightNumber}, ${fmtDayKey(r.date)}`,
   }));
   const fmt = (v: number) => (v === 0 ? '0' : fmtMinShort(v));
   const countFmt = (v: number) => String(Math.round(v));
