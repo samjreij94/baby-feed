@@ -67,7 +67,12 @@ function eventTitle(ev: SleepEvent): string {
 
 const UNDO_MS = 6000;
 
-type UndoToast = { sessionId: string; eventId: string; label: string };
+type EventSnapshot = { kind: SleepEventKind; at: number; text?: string };
+/** 'delete' undoes a newly added event; 'restore' re-adds a list-deleted event (new id). */
+type UndoToast =
+  | { action: 'delete'; sessionId: string; eventId: string; label: string }
+  | { action: 'restore'; sessionId: string; event: EventSnapshot; label: string };
+
 
 export function SleepScreen() {
   const [pane, setPane] = useState<Pane>(() => {
@@ -123,7 +128,7 @@ function TonightPanel() {
   }, [undo]);
   const offerUndo = (next: SleepSession, kind: SleepEventKind, before: Set<string>) => {
     const ev = [...next.events].reverse().find((e) => e.kind === kind && !e.deleted && !before.has(e.id));
-    if (ev) setUndo({ sessionId: next.id, eventId: ev.id, label: eventTitle(ev) });
+    if (ev) setUndo({ action: 'delete', sessionId: next.id, eventId: ev.id, label: eventTitle(ev) });
   };
   const afterEvent = (kind: SleepEventKind) => {
     const before = new Set((session?.events ?? []).map((e) => e.id));
@@ -142,12 +147,20 @@ function TonightPanel() {
   const undoLast = () => {
     if (!undo) return Promise.resolve();
     const cur = undo;
-    return sleep.deleteSleepEvent(cur.sessionId, cur.eventId).then(() => setUndo(null)).catch(fail);
+    if (cur.action === 'delete') {
+      return sleep.deleteSleepEvent(cur.sessionId, cur.eventId).then(() => setUndo(null)).catch(fail);
+    }
+    const opts: { at: number; text?: string } = { at: cur.event.at };
+    if (cur.event.text !== undefined) opts.text = cur.event.text;
+    return sleep.addSleepEvent(cur.sessionId, cur.event.kind, opts).then(() => setUndo(null)).catch(fail);
   };
-  const removeEvent = (eventId: string) => {
+  const removeEvent = (ev: SleepEvent) => {
     if (!id) return Promise.resolve();
-    return sleep.deleteSleepEvent(id, eventId).then(() => {
-      setUndo((u) => (u && u.eventId === eventId ? null : u));
+    const snapshot: EventSnapshot = ev.text !== undefined
+      ? { kind: ev.kind, at: ev.at, text: ev.text }
+      : { kind: ev.kind, at: ev.at };
+    return sleep.deleteSleepEvent(id, ev.id).then(() => {
+      setUndo({ action: 'restore', sessionId: id, event: snapshot, label: `Deleted · ${eventTitle(ev)}` });
     }).catch(fail);
   };
   const events = liveEvents(session);
@@ -299,7 +312,7 @@ function TonightPanel() {
                 type="button"
                 className="btn btn-quiet sleep-event-del"
                 aria-label={`Delete ${eventTitle(ev)}`}
-                onClick={() => removeEvent(ev.id)}
+                onClick={() => removeEvent(ev)}
               >
                 Delete
               </button>

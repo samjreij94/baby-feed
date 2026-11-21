@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../App';
 import { CoreProvider, localDateKey } from '../../core';
 import { seedHousehold } from '../demo';
@@ -24,6 +24,7 @@ async function openSleep() {
 
 describe('Sleep tab', () => {
   beforeEach(() => localStorage.clear());
+  afterEach(() => { vi.useRealTimers(); });
 
   it('opens Tonight, Plan and History without touching feeds or weights', async () => {
     const { core } = await seeded();
@@ -240,18 +241,75 @@ describe('Sleep tab', () => {
     expect(screen.queryByRole('button', { name: /Check done, I’ve left/ })).toBeNull();
   });
 
-  it('deletes an event from the session event list', async () => {
+  it('deletes from the event list, then Undo re-adds the same kind, at, and text and restores the timer', async () => {
     const t = testCore();
     await t.core.createHousehold('Samir');
+    const now = t.core.now();
+    await t.core.setSleepPlan({ startDate: localDateKey(now) });
+    const session = await t.core.startSleepSession({ type: 'night', startedAt: now - 3 * MIN, putDownAt: now - 3 * MIN });
+    await t.core.addSleepEvent(session.id, 'cry_start', { at: now - 3 * MIN });
+    const going = await t.core.addSleepEvent(session.id, 'check_start', { at: now - 10_000 });
+    const ev = going.events.find((e) => e.kind === 'check_start' && !e.deleted)!;
+    await t.core.addSleepEvent(session.id, 'note', { at: now - 5_000, text: 'Pacifier in' });
+
     renderApp(t.core);
     await openSleep();
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start bedtime / Put down' })); });
-    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Planned feed' })); });
-    expect(await screen.findByTestId('sleep-events')).toHaveTextContent(/Planned feed/);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete Planned feed logged' })); });
-    expect(screen.queryByTestId('sleep-events')).toBeNull();
-    const evs = t.core.getSnapshot().sleepSessions[0]!.events.filter((e) => e.kind === 'planned_night_feed');
-    expect(evs.every((e) => e.deleted)).toBe(true);
+    expect(await screen.findByRole('button', { name: /Check done, I’ve left/ })).toBeInTheDocument();
+    expect(screen.getByTestId('sleep-events')).toHaveTextContent('Pacifier in');
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete Went in for a check' })); });
+    expect(await screen.findByTestId('sleep-undo')).toHaveTextContent(/Deleted/);
+    expect(screen.getByTestId('sleep-undo')).toHaveTextContent(/Went in for a check/);
+    expect(await screen.findByRole('button', { name: /I’m going in/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Check done, I’ve left/ })).toBeNull();
+    expect(t.core.getSnapshot().sleepSessions[0]!.events.find((e) => e.id === ev.id)?.deleted).toBe(true);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })); });
+    expect(screen.queryByTestId('sleep-undo')).toBeNull();
+    expect(await screen.findByRole('button', { name: /Check done, I’ve left/ })).toBeInTheDocument();
+    const live = t.core.getSnapshot().sleepSessions[0]!.events.filter((e) => e.kind === 'check_start' && !e.deleted);
+    expect(live).toHaveLength(1);
+    expect(live[0]!.kind).toBe('check_start');
+    expect(live[0]!.at).toBe(ev.at);
+    expect(live[0]!.id).not.toBe(ev.id);
+
+    const note = t.core.getSnapshot().sleepSessions[0]!.events.find((e) => e.kind === 'note' && !e.deleted && e.text === 'Pacifier in')!;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete Pacifier in' })); });
+    expect(await screen.findByTestId('sleep-undo')).toHaveTextContent(/Deleted/);
+    expect(screen.queryByText('Pacifier in')).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })); });
+    expect(await screen.findByTestId('sleep-events')).toHaveTextContent('Pacifier in');
+    const notes = t.core.getSnapshot().sleepSessions[0]!.events.filter((e) => e.kind === 'note' && !e.deleted);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.text).toBe('Pacifier in');
+    expect(notes[0]!.at).toBe(note.at);
+    expect(notes[0]!.kind).toBe('note');
+  });
+
+  it('leaves a list-deleted event deleted after the Undo toast expires', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const t = testCore();
+      await t.core.createHousehold('Samir');
+      renderApp(t.core);
+      // Avoid findBy/waitFor: they poll with setTimeout, which is faked here.
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Sleep' })); });
+      expect(screen.getByTestId('sleep')).toBeInTheDocument();
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start bedtime / Put down' })); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Planned feed' })); });
+      expect(screen.getByTestId('sleep-events')).toHaveTextContent(/Planned feed/);
+      const ev = t.core.getSnapshot().sleepSessions[0]!.events.find((e) => e.kind === 'planned_night_feed' && !e.deleted)!;
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Delete Planned feed logged' })); });
+      expect(screen.getByTestId('sleep-undo')).toHaveTextContent(/Deleted/);
+      expect(screen.queryByTestId('sleep-events')).toBeNull();
+      await act(async () => { vi.advanceTimersByTime(6000); });
+      expect(screen.queryByTestId('sleep-undo')).toBeNull();
+      const after = t.core.getSnapshot().sleepSessions[0]!.events.find((e) => e.id === ev.id);
+      expect(after?.deleted).toBe(true);
+      expect(t.core.getSnapshot().sleepSessions[0]!.events.some((e) => e.kind === 'planned_night_feed' && !e.deleted)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('History labels a night by the plan evening date, not the calendar start date', async () => {
