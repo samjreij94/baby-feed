@@ -13,7 +13,6 @@ import {
   defaultSleepIntervals,
   defaultSleepPlanFields,
   effectivePlan,
-  isMorningWake,
   isOpenSleepSession,
   mergeSleepSession,
   normalizePlanPatch,
@@ -714,10 +713,12 @@ export class FeedCore {
     if (evErr) throw new Error(evErr);
     const events = [...cur.events, ev];
     let endedAt: number | null = cur.endedAt;
-    if ((kind === 'cry_start' || kind === 'night_waking') && endedAt == null) {
+    // Walk the session including this event so an explicit night_waking at/after
+    // the cutoff ends the night even if she was never marked asleep (SPEC §8c.5).
+    if (endedAt == null && (kind === 'cry_start' || kind === 'night_waking')) {
       const plan = effectivePlan(this.storedSleepPlan(), when);
-      const st = timerState(cur, plan, when);
-      if (st.phase === 'asleep' && isMorningWake(plan, cur, when)) endedAt = when;
+      const st = timerState({ ...cur, events }, plan, when);
+      if (st.endReason === 'morning') endedAt = when;
     }
     return this.put({ ...cur, events, endedAt }, cur);
   }

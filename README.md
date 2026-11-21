@@ -37,10 +37,12 @@ The **Weight** tab logs weigh-ins (lb/oz or kg; stored as grams), syncs them lik
 ```sh
 export PATH=~/.local/node-v22.23.3-linux-x64/bin:$PATH
 export BABY_FEED_INVITE='…invite code or link from Settings…'
-node scripts/backup-sync.mjs                         # read-only; writes backups/sync-<ts>.json (git-ignored) + counts
+node scripts/backup-sync.mjs --api https://baby-feed-sync.samjreij94.workers.dev
+                                                     # read-only; --api is required (no live default)
 (cd server && npm test && npx wrangler deploy)       # 1. worker (no migration needed for new entry kinds)
 npm run deploy                                       # 2. app (GitHub Pages)
-node scripts/backup-sync.mjs --verify backups/sync-<ts>.json   # every old entry still present + identical
+node scripts/backup-sync.mjs --api https://baby-feed-sync.samjreij94.workers.dev --verify backups/sync-<ts>.json
+                                                     # every old entry still present + identical
 ```
 
 ## Run everything locally (two "phones" = two browser profiles)

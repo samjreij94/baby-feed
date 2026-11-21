@@ -330,6 +330,81 @@ describe('timerState', () => {
     expect(sessionMetrics(s, p, sat3 + 30_000).wakings).toBe(1);
   });
 
+  it('a night waking without a prior asleep still resets to check 1 before the cutoff', () => {
+    const sat2 = new Date(2026, 10, 21, 2, 0).getTime();
+    const s = session({
+      events: [
+        ev('cry_start', T0),
+        ev('check_start', T0 + 3 * MIN),
+        ev('check_end', T0 + 3 * MIN + 20_000),
+        ev('cry_stop', T0 + 4 * MIN),
+        ev('night_waking', sat2),
+      ],
+    });
+    const st = timerState(s, p, sat2);
+    expect(st.phase).toBe('quiet');
+    expect(st.checkIndex).toBe(1);
+    expect(st.intervalMs).toBe(3 * MIN);
+    expect(st.attemptStartedAt).toBe(sat2);
+    expect(st.endReason).toBeNull();
+    expect(st.crying).toBe(false);
+    // Never marked asleep: a waking is not a metrics night-waking.
+    expect(sessionMetrics(s, p, sat2).wakings).toBe(0);
+    expect(sessionMetrics(s, p, sat2).checks).toBe(1);
+  });
+
+  it('a night waking without a prior asleep ends the night at or after the cutoff', () => {
+    const sat610 = new Date(2026, 10, 21, 6, 10).getTime();
+    const s = session({
+      events: [
+        ev('cry_start', T0),
+        ev('check_start', T0 + 3 * MIN),
+        ev('check_end', T0 + 3 * MIN + 20_000),
+        ev('cry_stop', T0 + 4 * MIN),
+        ev('night_waking', sat610),
+      ],
+    });
+    const st = timerState(s, p, sat610);
+    expect(st.phase).toBe('ended');
+    expect(st.endReason).toBe('morning');
+    expect(st.crying).toBe(false);
+    expect(st.dueAt).toBeNull();
+  });
+
+  it('cry_stop at the same millisecond as check_end is not overridden, in either id order, and survives merge', () => {
+    const at = T0 + 3 * MIN;
+    const base = [
+      ev('cry_start', T0),
+      ev('check_start', T0 + 2 * MIN),
+    ];
+    const stopFirst = session({
+      events: [...base, ev('cry_stop', at, { id: 'aaa-stop' }), ev('check_end', at, { id: 'zzz-end' })],
+    });
+    const endFirst = session({
+      events: [...base, ev('check_end', at, { id: 'aaa-end' }), ev('cry_stop', at, { id: 'zzz-stop' })],
+    });
+    for (const s of [stopFirst, endFirst]) {
+      const st = timerState(s, p, at);
+      expect(st.phase, s.events.map((e) => e.id).join(',')).toBe('quiet');
+      expect(st.crying).toBe(false);
+      expect(st.checkIndex).toBe(2);
+      expect(st.dueAt).toBeNull();
+    }
+    const merged = mergeSleepSession(stopFirst, { ...endFirst, events: [ev('cry_stop', at, { id: 'aaa-stop' }), ev('check_end', at, { id: 'zzz-end' })] });
+    const walked = mergeSleepEvents(stopFirst.events, endFirst.events);
+    expect(walked.filter((e) => e.at === at).map((e) => e.id)).toEqual(['aaa-end', 'aaa-stop', 'zzz-end', 'zzz-stop'].sort());
+    // Same walk on both devices after union: quiet, check #2.
+    const a = session({ events: walked, updatedAt: T0 + 1, deviceId: 'dev-a' });
+    const b = session({ events: walked.slice().reverse(), updatedAt: T0 + 1, deviceId: 'dev-b' });
+    const once = timerState(a, p, at);
+    const twice = timerState(mergeSleepSession(a, b), p, at);
+    expect(once.phase).toBe('quiet');
+    expect(twice.phase).toBe('quiet');
+    expect(once.checkIndex).toBe(2);
+    expect(twice.checkIndex).toBe(2);
+    expect(merged).toBeTruthy();
+  });
+
   it('nap 60-minute cap: in-progress attempt caps; a later waking starts a new cap', () => {
     const nap = session({ type: 'nap', startedAt: T0, putDownAt: T0, events: [ev('cry_start', T0 + MIN)] });
     const mid = timerState(nap, p, T0 + 10 * MIN);

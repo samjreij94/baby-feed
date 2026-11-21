@@ -142,22 +142,9 @@ export function intervalForCheck(plan: SleepPlan, night: number, checkIndex: num
   return Math.max(0, mins) * 60_000;
 }
 
-const KIND_ORDER: Record<SleepEventKind, number> = {
-  night_waking: 0,
-  cry_start: 1,
-  cry_stop: 2,
-  check_start: 3,
-  check_end: 4,
-  asleep: 5,
-  planned_night_feed: 6,
-  note: 7,
-};
-
+/** SPEC §8c.5: sort by `(at, id)` so both devices walk a merge in the same order. */
 function eventOrder(a: SleepEvent, b: SleepEvent): number {
   if (a.at !== b.at) return a.at - b.at;
-  const ka = KIND_ORDER[a.kind] ?? 50;
-  const kb = KIND_ORDER[b.kind] ?? 50;
-  if (ka !== kb) return ka - kb;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
@@ -212,7 +199,7 @@ function applyAsleep(w: Walk, at: EpochMs): void {
   w.pendingWake = false;
 }
 
-function applyWake(w: Walk, at: EpochMs, implicitCry: boolean, morning: boolean): void {
+function applyWake(w: Walk, at: EpochMs, implicitCry: boolean, morning: boolean, countWaking: boolean): void {
   if (morning) {
     closeCry(w, at);
     w.endedAt = at;
@@ -228,12 +215,21 @@ function applyWake(w: Walk, at: EpochMs, implicitCry: boolean, morning: boolean)
   w.inCheck = false;
   w.wasCrying = false;
   w.attemptStartedAt = at;
-  w.wakings += 1;
+  // Metrics count night_waking / implicit cry only after the first asleepAt (SPEC §8c.6).
+  if (countWaking) w.wakings += 1;
   w.pendingWake = true;
   if (implicitCry) {
     startCry(w, at);
     w.pendingWake = true; // cry_start in the same instant shouldn't add another waking
   }
+}
+
+function alreadyWokenAt(w: Walk, at: EpochMs): boolean {
+  return w.pendingWake && evAtAttempt(w, at);
+}
+
+function evAtAttempt(w: Walk, at: EpochMs): boolean {
+  return at === (w.attemptStartedAt ?? at);
 }
 
 function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk {
@@ -267,20 +263,21 @@ function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk
 
     switch (ev.kind) {
       case 'night_waking': {
-        // Do not skip just because session.endedAt is already set: events at or
-        // before endedAt still count (History metrics after Morning (end)).
-        if (w.asleep) {
-          applyWake(w, ev.at, false, isMorningWake(plan, session, ev.at));
+        // SPEC §8c.5 step 2: an explicit night_waking always applies, even if she
+        // was never marked asleep. Same-instant implicit cry already handled: don't recount.
+        if (alreadyWokenAt(w, ev.at) || (w.endedAt != null && w.endReason === 'morning' && ev.at === w.endedAt)) {
+          break;
         }
-        // Already woken (e.g. a same-instant cry_start was sorted first): don't recount or stop a new cry.
+        const afterSleep = session.asleepAt != null && ev.at > session.asleepAt;
+        applyWake(w, ev.at, false, isMorningWake(plan, session, ev.at), afterSleep);
         break;
       }
       case 'cry_start': {
         if (w.asleep) {
-          applyWake(w, ev.at, true, isMorningWake(plan, session, ev.at));
+          applyWake(w, ev.at, true, isMorningWake(plan, session, ev.at), true);
           break;
         }
-        if (w.pendingWake && ev.at === (w.attemptStartedAt ?? ev.at)) {
+        if (alreadyWokenAt(w, ev.at)) {
           // same-instant cry after an explicit night_waking: start crying, don't count again
           w.pendingWake = false;
           startCry(w, ev.at);
@@ -293,6 +290,8 @@ function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk
       case 'cry_stop': {
         w.pendingWake = false;
         closeCry(w, ev.at);
+        // A stop during the check (including the same ms as check_end) means do not resume.
+        w.wasCrying = false;
         break;
       }
       case 'check_start': {

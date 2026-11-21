@@ -2,20 +2,27 @@
 /**
  * Read-only backup / verification of a household's sync data (pure pull: `changes: []`, nothing is written).
  *
- *   BABY_FEED_INVITE='ABCD-…' node scripts/backup-sync.mjs                  # write backups/sync-<ts>.json + print counts
- *   BABY_FEED_INVITE='…' node scripts/backup-sync.mjs --verify backups/sync-<before>.json
+ *   BABY_FEED_INVITE='ABCD-…' node scripts/backup-sync.mjs --api http://127.0.0.1:8787
+ *       # write backups/sync-<ts>.json + print counts
+ *   BABY_FEED_INVITE='…' node scripts/backup-sync.mjs --api http://127.0.0.1:8787 --verify backups/sync-<before>.json
  *       # pull again and check every pre-existing entry is still present and byte-identical (new weight rows are fine)
  *
  * The invite code (household secret) is read from BABY_FEED_INVITE or --invite; it is never written to the backup.
  * The backup contains household data, so backups/ is git-ignored. Node >= 18 (global fetch).
- * Options: --api <url> (default https://baby-feed-sync.samjreij94.workers.dev), --out <dir> (default backups).
+ * Options: --api <url> (required; there is no default, so a typo cannot hit the live worker),
+ *          --out <dir> (default backups).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const api = (opt('--api') ?? process.env.VITE_API_BASE_URL ?? 'https://baby-feed-sync.samjreij94.workers.dev').replace(/\/+$/, '');
+const apiArg = opt('--api');
+if (!apiArg) {
+  console.error('Pass --api <url> explicitly (e.g. --api http://127.0.0.1:8787). There is no default, so this script cannot hit the live worker by accident.');
+  process.exit(2);
+}
+const api = apiArg.replace(/\/+$/, '');
 const outDir = resolve(opt('--out') ?? 'backups');
 const verifyPath = opt('--verify');
 
@@ -51,7 +58,7 @@ function count(entries) {
   for (const e of entries) {
     const k = (out[e.kind] ??= { total: 0, live: 0, deleted: 0 });
     k.total++;
-    e.deleted ? k.deleted++ : k.live++;
+    if (e.deleted) k.deleted++; else k.live++;
   }
   return out;
 }

@@ -228,4 +228,40 @@ describe('sleep store + sync', () => {
     expect(b.core.getSnapshot().sleepSessions.map((x) => x.id)).toEqual([s.id]);
   });
 
+
+  it('Night waking without Asleep resets to check 1 before cutoff and auto-ends at or after it', async () => {
+    const { a, clock } = await pair();
+    const s = await a.core.startSleepSession({ type: 'night', putDownAt: clock.now() });
+    await a.core.addSleepEvent(s.id, 'cry_start');
+    clock.advance(3 * MIN);
+    await a.core.addSleepEvent(s.id, 'check_start');
+    clock.advance(20_000);
+    await a.core.addSleepEvent(s.id, 'check_end');
+    clock.advance(40_000);
+    await a.core.addSleepEvent(s.id, 'cry_stop');
+    const plan = a.core.getSnapshot().sleepPlan!;
+    expect(timerState(a.core.getSnapshot().sleepSessions[0]!, plan, clock.now()).checkIndex).toBe(2);
+
+    clock.set(new Date(2026, 10, 21, 2, 0).getTime());
+    await a.core.addSleepEvent(s.id, 'night_waking');
+    const at2 = a.core.getSnapshot().sleepSessions[0]!;
+    const st2 = timerState(at2, plan, clock.now());
+    expect(at2.endedAt).toBeNull();
+    expect(st2.phase).toBe('quiet');
+    expect(st2.checkIndex).toBe(1);
+    expect(st2.attemptStartedAt).toBe(clock.now());
+
+    const s2 = await a.core.startSleepSession({ type: 'night', putDownAt: clock.now() });
+    await a.core.addSleepEvent(s2.id, 'cry_start');
+    clock.advance(3 * MIN);
+    await a.core.addSleepEvent(s2.id, 'check_start');
+    clock.advance(20_000);
+    await a.core.addSleepEvent(s2.id, 'check_end');
+    await a.core.addSleepEvent(s2.id, 'cry_stop');
+    clock.set(new Date(2026, 10, 21, 6, 10).getTime());
+    const ended = await a.core.addSleepEvent(s2.id, 'night_waking');
+    expect(ended.endedAt).toBe(clock.now());
+    expect(timerState(ended, a.core.getSnapshot().sleepPlan!, clock.now())).toMatchObject({ phase: 'ended', endReason: 'morning' });
+  });
+
 });
