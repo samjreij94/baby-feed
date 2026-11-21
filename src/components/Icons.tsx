@@ -25,3 +25,4 @@ export const IconCopy = (p: P) => (<svg {...base} {...p}><rect x="8.5" y="8.5" w
 export const IconCheck = (p: P) => (<svg {...base} {...p}><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>);
 export const IconSync = (p: P) => (<svg {...base} {...p}><path d="M20 11a8 8 0 0 0-14.3-4.5L4 8.5M4 4v4.5h4.5M4 13a8 8 0 0 0 14.3 4.5l1.7-2M20 20v-4.5h-4.5" /></svg>);
 export const IconScale = (p: P) => (<svg {...base} {...p}><rect x="4" y="4.5" width="16" height="15" rx="3" /><path d="M8.5 9.5a4.5 4.5 0 0 1 7 0" /><path d="M12 11.5l1.8-1.6" /></svg>);
+export const IconSleep = (p: P) => (<svg {...base} {...p}><path d="M15.5 13.5A6 6 0 1 1 10 5.5 4.8 4.8 0 0 0 15.5 13.5z" /><path d="M17.5 4.5v3M16 6h3" /><path d="M20.5 9.5v2M19.5 10.5h2" /></svg>);

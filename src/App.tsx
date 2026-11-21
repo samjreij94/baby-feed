@@ -10,6 +10,7 @@ import { HomeScreen } from './screens/HomeScreen';
 import { NaraImportScreen } from './screens/NaraImportScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { WeightScreen } from './screens/WeightScreen';
+import { SleepScreen } from './screens/SleepScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { TimerScreen } from './screens/TimerScreen';
 import { IconDrop } from './components/Icons';
@@ -24,7 +25,7 @@ import './ui/styles/app.css';
 
 const initialTab = (): Tab => {
   const t = new URLSearchParams(location.search).get('tab');
-  return t === 'history' || t === 'charts' || t === 'weight' || t === 'settings' || t === 'import' ? (t === 'import' ? 'settings' : t) : 'home';
+  return t === 'history' || t === 'charts' || t === 'weight' || t === 'sleep' || t === 'settings' || t === 'import' ? (t === 'import' ? 'settings' : t) : 'home';
 };
 
 /** Calm placeholder while IndexedDB loads (usually a blink). Identity + a running timer never wait for this. */
@@ -121,6 +122,7 @@ export default function App() {
             />
           )}
           {tab === 'charts' && <ChartsScreen units={prefs.units} />}
+          {tab === 'sleep' && <SleepScreen />}
           {tab === 'weight' && (
             <WeightScreen
               unit={wUnit}

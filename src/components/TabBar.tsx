@@ -1,8 +1,9 @@
-import { IconChart, IconHistory, IconHome, IconScale, IconSettings } from './Icons';
+import { IconChart, IconHistory, IconHome, IconScale, IconSettings, IconSleep } from './Icons';
 
-export type Tab = 'home' | 'history' | 'charts' | 'weight' | 'settings';
+export type Tab = 'home' | 'sleep' | 'history' | 'charts' | 'weight' | 'settings';
 const TABS: { id: Tab; label: string; Icon: typeof IconHome }[] = [
   { id: 'home', label: 'Home', Icon: IconHome },
+  { id: 'sleep', label: 'Sleep', Icon: IconSleep },
   { id: 'history', label: 'History', Icon: IconHistory },
   { id: 'charts', label: 'Charts', Icon: IconChart },
   { id: 'weight', label: 'Weight', Icon: IconScale },
