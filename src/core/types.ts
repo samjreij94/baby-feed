@@ -106,7 +106,153 @@ export interface WeightEntry extends EntryBase {
   note?: string;
 }
 
-export type Entry = Feed | MemberEntry | HouseholdEntry | WeightEntry;
+/** Reserved id of the single synced sleep-training plan per household (SPEC §8c). */
+export const SLEEP_PLAN_ID = 'sleep-plan';
+
+export type SleepSessionType = 'night' | 'nap';
+export type SleepEventKind =
+  | 'cry_start'
+  | 'cry_stop'
+  | 'check_start'
+  | 'check_end'
+  | 'night_waking'
+  | 'planned_night_feed'
+  | 'note'
+  | 'asleep';
+
+export interface SleepEvent {
+  /** UUID v4, generated on the device that created the event. Never changes. */
+  id: UUID;
+  kind: SleepEventKind;
+  /** Event time (core clock). */
+  at: EpochMs;
+  /** Member who logged the event (name snapshot). */
+  loggedBy: MemberRef;
+  /** Device that created this event. */
+  deviceId: string;
+  /** Event tombstone; hidden from timer/metrics. Once true in a merge, stays true. */
+  deleted?: boolean;
+  /** Required for `note`; optional otherwise. ≤1000 chars. */
+  text?: string;
+}
+
+export interface SleepSession extends EntryBase {
+  kind: 'sleep_session';
+  type: SleepSessionType;
+  startedAt: EpochMs;
+  /** In the crib; time-to-asleep starts here. */
+  putDownAt: EpochMs | null;
+  /** First time she fell asleep this session; later falls-asleep are `asleep` events. */
+  asleepAt: EpochMs | null;
+  /** null while the session is open. */
+  endedAt: EpochMs | null;
+  /**
+   * If a finite number ≥ 1, used instead of the date-computed night number.
+   * Explicit `null` clears an override (must be present on the record so a merge can see the clear).
+   */
+  nightNumberOverride?: number | null;
+  /** Append-only log; union-merged across devices (SPEC §8c.3). */
+  events: SleepEvent[];
+  note?: string;
+}
+
+export interface SleepIntervalRow {
+  /** 1-based night number this row applies to. Row 7 also applies to all later nights. */
+  night: number;
+  firstMin: number;
+  secondMin: number;
+  laterMin: number;
+}
+
+/** One synced plan per household; `id === SLEEP_PLAN_ID`. Whole-record LWW. */
+export interface SleepPlan extends EntryBase {
+  kind: 'sleep_plan';
+  /** Local calendar date the plan started, 'YYYY-MM-DD'. Night 1 begins this evening. */
+  startDate: string;
+  /** Minutes from local midnight (default 360 = 6:00 AM). */
+  wakeCutoffMinutes: number;
+  /** Exactly 7 rows for nights 1–7; row 7 is N7+. */
+  intervals: SleepIntervalRow[];
+}
+
+export type SleepTimerPhase =
+  | 'pre_putdown'
+  | 'quiet'
+  | 'crying'
+  | 'checking'
+  | 'asleep'
+  | 'nap_capped'
+  | 'ended';
+
+export type SleepEndReason = 'manual' | 'morning';
+
+export interface SleepTimerState {
+  phase: SleepTimerPhase;
+  nightNumber: number;
+  /** 1-based: 1 before the first check, 2 after first check_end, … */
+  checkIndex: number;
+  /** Target wait for checkIndex from the plan table (0 when not in a wait cycle). */
+  intervalMs: number;
+  /** Wait accumulated in the current continuous cry; 0 when not crying. */
+  elapsedMs: number;
+  /** max(0, intervalMs - elapsedMs) when crying, else 0. */
+  remainingMs: number;
+  /** cryStartedAt + intervalMs when accumulating, else null. */
+  dueAt: EpochMs | null;
+  cryStartedAt: EpochMs | null;
+  /** Put-down, or the last night waking / implicit wake. */
+  attemptStartedAt: EpochMs | null;
+  /** attemptStartedAt + NAP_CAP_MS for an in-progress nap; else null. */
+  napCapDueAt: EpochMs | null;
+  endReason: SleepEndReason | null;
+  crying: boolean;
+}
+
+export interface SleepSessionMetrics {
+  sessionId: UUID;
+  type: SleepSessionType;
+  nightNumber: number;
+  /** Attribution date, 'YYYY-MM-DD'. */
+  date: string;
+  startedAt: EpochMs;
+  putDownAt: EpochMs | null;
+  asleepAt: EpochMs | null;
+  endedAt: EpochMs | null;
+  /** putDownAt → first asleepAt; null if not yet asleep. */
+  timeToAsleepMs: number | null;
+  /** Sum of continuous cry stretches (open cry to min(now, endedAt)). */
+  cryingMs: number;
+  /** Completed checks = number of effective check_end events. */
+  checks: number;
+  /** Night wakings after first sleep (explicit + implicit, de-duped). */
+  wakings: number;
+}
+
+export interface SleepTrend {
+  /** Type 'night', oldest nightNumber then startedAt. */
+  nights: SleepSessionMetrics[];
+  /** Oldest first. */
+  naps: SleepSessionMetrics[];
+}
+
+export interface StartSleepSessionInput {
+  type: SleepSessionType;
+  startedAt?: EpochMs;
+  putDownAt?: EpochMs;
+}
+
+export interface AddSleepEventOpts {
+  at?: EpochMs;
+  text?: string;
+}
+
+export type SleepSessionPatch = Partial<
+  Pick<SleepSession, 'startedAt' | 'putDownAt' | 'asleepAt' | 'endedAt' | 'type' | 'note' | 'nightNumberOverride'>
+>;
+
+export type SleepPlanPatch = Partial<Pick<SleepPlan, 'startDate' | 'wakeCutoffMinutes' | 'intervals'>>;
+
+export type Entry = Feed | MemberEntry | HouseholdEntry | WeightEntry | SleepSession | SleepPlan;
 
 /** Start time of any feed (breast: startedAt, bottle: at). */
 export type FeedStart = EpochMs;

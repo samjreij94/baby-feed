@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createMemoryServer } from '../src/app.ts';
 import { ALERT_EVERY_MS, Household, isPushEndpoint, MAX_ALERTS, MemoryHouseholdStorage, nursingMs, type PushSub } from '../src/logic.ts';
-import { fromB64u, sendPush, vapidAuthHeader } from '../src/vapid.ts';
+import { defaultSleepPlanFields, SLEEP_PLAN_ID } from '../../src/core/sleep.ts';
+import type { SleepSession } from '../../src/core/types.ts';
+import { decryptWebPushWithUa, encryptWebPush, fromB64u, sendPush, vapidAuthHeader } from '../src/vapid.ts';
 
 const MIN = 60_000;
 const sub = (memberId = 'm1', n = 1): PushSub => ({ endpoint: `https://web.push.apple.com/abc${n}`, p256dh: 'p', auth: 'a', memberId });
@@ -150,5 +152,103 @@ describe('push routes', () => {
     expect((await post('/api/push/subscribe', { ...good, endpoint: 'https://evil.example/x' }, secret)).status).toBe(400);
     expect((await post('/api/push/subscribe', good, secret)).status).toBe(200);
     expect((await post('/api/push/unsubscribe', { endpoint: good.endpoint }, secret)).status).toBe(200);
+  });
+});
+
+
+const sleepBase = {
+  householdId: 'h', createdAt: T0, updatedAt: T0, deleted: false,
+  loggedBy: { id: 'm1', name: 'Mom' }, deviceId: 'dev-a',
+};
+function sleepSession(p: Partial<SleepSession> = {}): SleepSession {
+  return {
+    ...sleepBase,
+    id: p.id ?? 'sess-00000001',
+    kind: 'sleep_session',
+    type: p.type ?? 'night',
+    startedAt: p.startedAt ?? T0,
+    putDownAt: p.putDownAt === undefined ? T0 : p.putDownAt,
+    asleepAt: p.asleepAt ?? null,
+    endedAt: p.endedAt ?? null,
+    nightNumberOverride: p.nightNumberOverride ?? 1,
+    events: p.events ?? [],
+  };
+}
+function sleepPlan() {
+  return { ...sleepBase, id: SLEEP_PLAN_ID, kind: 'sleep_plan' as const, ...defaultSleepPlanFields('2026-11-20') };
+}
+const ev = (kind: SleepSession['events'][number]['kind'], at: number, id?: string) => ({
+  id: id ?? kind, kind, at, loggedBy: sleepBase.loggedBy, deviceId: 'dev-a',
+});
+
+describe('sleep check-in alarms', () => {
+  it('schedules from dueAt, cancels on cry_stop, and notifies every household subscription', async () => {
+    const { store, h } = setup();
+    h.addSub(sub('m1', 1));
+    h.addSub(sub('m2', 2));
+    store.put(sleepPlan() as never, 1);
+    store.put(sleepSession({ events: [ev('cry_start', T0)] }) as never, 2);
+    // Night 1 first interval is 3 min
+    expect(h.nextAlertAt(T0)).toBe(T0 + 3 * MIN);
+    const sent: Array<{ endpoint: string; type?: string }> = [];
+    const send = async (s: PushSub, payload?: { type: string }) => (sent.push({ endpoint: s.endpoint, type: payload?.type }), 'ok' as const);
+    expect(await h.runAlerts(T0 + MIN, send)).toBe(T0 + 3 * MIN);
+    expect(sent).toHaveLength(0);
+
+    expect(await h.runAlerts(T0 + 3 * MIN + 10, send)).toBeNull(); // due, sent, nothing else scheduled
+    expect(sent.map((x) => x.type)).toEqual(['sleep_check', 'sleep_check']);
+    expect(sent.map((x) => x.endpoint).sort()).toEqual(['https://web.push.apple.com/abc1', 'https://web.push.apple.com/abc2']);
+
+    sent.length = 0;
+    await h.runAlerts(T0 + 3 * MIN + 20, send);
+    expect(sent).toHaveLength(0); // dedup
+
+    // cry_stop cancels; no alarm
+    store.put(sleepSession({ events: [ev('cry_start', T0), ev('cry_stop', T0 + 4 * MIN)], updatedAt: T0 + 1 }) as never, 3);
+    expect(h.nextAlertAt(T0 + 4 * MIN)).toBeNull();
+  });
+
+  it('reschedules when crying restarts the same check, and nap cap is scheduled', async () => {
+    const { store, h } = setup();
+    h.addSub(sub());
+    store.put(sleepPlan() as never, 1);
+    store.put(sleepSession({
+      type: 'nap',
+      events: [ev('cry_start', T0), ev('cry_stop', T0 + MIN), ev('cry_start', T0 + 2 * MIN, 'cry2')],
+    }) as never, 2);
+    // new dueAt = T0 + 2 min + 3 min = T0 + 5 min; also nap cap at T0 + 60 min
+    expect(h.nextAlertAt(T0 + 2 * MIN)).toBe(T0 + 5 * MIN);
+    const sent: string[] = [];
+    const send = async (_s: PushSub, payload?: { type: string }) => (sent.push(payload?.type ?? ''), 'ok' as const);
+    await h.runAlerts(T0 + 5 * MIN + 10, send);
+    expect(sent).toEqual(['sleep_check']);
+    expect(h.nextAlertAt(T0 + 5 * MIN + 10)).toBe(T0 + 60 * MIN);
+    sent.length = 0;
+    await h.runAlerts(T0 + 60 * MIN, send);
+    expect(sent).toEqual(['sleep_nap_cap']);
+    expect(h.nextAlertAt(T0 + 60 * MIN)).toBeNull();
+  });
+});
+
+describe('aes128gcm payloads', () => {
+  it('round-trips a sleep_check payload', async () => {
+    const ua = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair;
+    const uaPub = new Uint8Array(await crypto.subtle.exportKey('raw', ua.publicKey) as ArrayBuffer);
+    const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const auth = crypto.getRandomValues(new Uint8Array(16));
+    const s = { endpoint: 'https://web.push.apple.com/x', p256dh: b64(uaPub), auth: b64(auth), memberId: 'm' };
+    const payload = { type: 'sleep_check' as const, sessionId: 'sess-1' };
+    const body = await encryptWebPush(s, new TextEncoder().encode(JSON.stringify(payload)));
+    const plain = await decryptWebPushWithUa(ua.privateKey, uaPub, auth, body);
+    expect(JSON.parse(new TextDecoder().decode(plain))).toEqual(payload);
+
+    const calls: Array<{ init: RequestInit }> = [];
+    const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+    const jwk = (await crypto.subtle.exportKey('jwk', kp.privateKey)) as JsonWebKey;
+    const raw = new Uint8Array((await crypto.subtle.exportKey('raw', kp.publicKey)) as ArrayBuffer);
+    const env = { VAPID_PUBLIC: b64(raw), VAPID_PRIVATE: jwk.d! };
+    const mk = (status: number) => async (_url: string, init: RequestInit) => (calls.push({ init }), new Response(null, { status }));
+    expect(await sendPush(s, env, mk(201), payload)).toBe('ok');
+    expect((calls[0]!.init.headers as Record<string, string>)['Content-Encoding']).toBe('aes128gcm');
   });
 });

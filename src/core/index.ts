@@ -7,9 +7,34 @@ import type { AddBottleInput, AddManualBreastInput, BottleFeed, BreastFeed, Entr
 
 export type * from './types';
 export { FeedCore, getCore, ActiveFeedExistsError, NotImplementedError, defaultApiBaseUrl, type CoreSnapshot, type CoreOptions } from './store';
-export { CoreProvider, useCore, useNow, useFeeds, useActiveFeed, useLastFeed, useMetrics, useHousehold, useSync, useFeedActions, useWeights, useWeightActions, useCoreReady, useNaraImport, type ActiveFeedHook, type NaraImportHook, type NaraImportPreview, type NaraImportStatus } from './hooks';
+export { CoreProvider, useCore, useNow, useFeeds, useActiveFeed, useLastFeed, useMetrics, useHousehold, useSync, useFeedActions, useWeights, useWeightActions, useCoreReady, useNaraImport, useSleepSessions, useSleepPlan, useActiveSleepSession, useSleepTimer, useSleepMetrics, type ActiveFeedHook, type ActiveSleepSessionHook, type SleepPlanHook, type NaraImportHook, type NaraImportPreview, type NaraImportStatus } from './hooks';
 export { opposite, feedStart, sideMs, nursingMs, lastFeedInfo, activeFeedView, validAmountOz } from './feed';
 export { computeMetrics, localDateKey, startOfLocalDay, startOfLocalWeek, startOfLocalMonth } from './metrics';
+export {
+  SLEEP_PLAN_ID,
+  DEFAULT_WAKE_CUTOFF_MINUTES,
+  NAP_CAP_MS,
+  MAX_SLEEP_EVENTS,
+  defaultSleepIntervals,
+  defaultSleepPlanFields,
+  unsavedDefaultPlan,
+  effectivePlan,
+  calendarDays,
+  sessionNightDate,
+  sessionAttributionDate,
+  nightNumber,
+  wakeCutoffAt,
+  isMorningWake,
+  intervalForCheck,
+  timerState,
+  sessionMetrics,
+  sleepTrend,
+  mergeSleepSession,
+  mergeSleepEvents,
+  activeSleepView,
+  isOpenSleepSession,
+} from './sleep';
+
 export {
   G_PER_LB, G_PER_OZ, MIN_GRAMS, MAX_GRAMS, DAYS_PER_MONTH, WHO_MAX_DAYS, WHO_MAX_MONTHS, validGrams, lbOzToGrams, kgToGrams, gramsToKg, gramsToLbOz,
   formatWeight, formatAge, ageInDays, daysToMonths, whoKg, whoLine, whoZ, whoPercentile, ordinal, WHO_PERCENTILES, WHO_SEXES, type WhoPercentile, type WhoSex,

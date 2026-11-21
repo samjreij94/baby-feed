@@ -2,8 +2,30 @@
 import { createContext, createElement, useCallback, useRef, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { activeFeedView, feedStart, lastFeedInfo } from './feed';
 import { computeMetrics } from './metrics';
+import { activeSleepView, effectivePlan, sessionMetrics, sleepTrend, timerState, unsavedDefaultPlan } from './sleep';
 import { getCore, type CoreSnapshot, type FeedCore } from './store';
-import type { WeightEntry, ImportResult, Member, ActiveFeedView, BreastFeed, Feed, FeedRange, HouseholdView, LastFeedInfo, Metrics, MetricsOptions, MetricsRange, Side, SyncView } from './types';
+import type {
+  WeightEntry,
+  ImportResult,
+  Member,
+  ActiveFeedView,
+  BreastFeed,
+  Feed,
+  FeedRange,
+  HouseholdView,
+  LastFeedInfo,
+  Metrics,
+  MetricsOptions,
+  MetricsRange,
+  Side,
+  SleepPlan,
+  SleepPlanPatch,
+  SleepSession,
+  SleepSessionMetrics,
+  SleepTimerState,
+  SleepTrend,
+  SyncView,
+} from './types';
 
 const Ctx = createContext<FeedCore | null>(null);
 
@@ -160,6 +182,101 @@ export function useFeedActions() {
 /** false until persisted data has loaded from IndexedDB (identity + running timer are available earlier via the mirror). */
 export function useCoreReady(): boolean {
   return useSnapshot().ready;
+}
+
+
+/** Non-deleted sleep sessions, newest start first, optionally limited to a range of startedAt. */
+export function useSleepSessions(range?: FeedRange): SleepSession[] {
+  const { sleepSessions } = useSnapshot();
+  const core = useCore();
+  const key = range ? JSON.stringify(range) : '';
+  return useMemo(() => {
+    const range = key ? (JSON.parse(key) as FeedRange) : undefined;
+    if (!range) return sleepSessions;
+    const now = core.now();
+    const from = 'days' in range ? now - range.days * 86_400_000 : range.from;
+    const to = 'days' in range ? Infinity : (range.to ?? Infinity);
+    return sleepSessions.filter((s) => s.startedAt >= from && s.startedAt < to);
+  }, [sleepSessions, key, core]);
+}
+
+export interface SleepPlanHook {
+  /** Stored record, or a non-persisted default (startDate = today) if none. */
+  plan: SleepPlan;
+  saved: boolean;
+  setPlan(patch: SleepPlanPatch): Promise<SleepPlan>;
+  resetIntervals(): Promise<SleepPlan>;
+}
+
+export function useSleepPlan(): SleepPlanHook {
+  const core = useCore();
+  const { sleepPlan } = useSnapshot();
+  const now = useNow(60_000);
+  const plan = sleepPlan ?? unsavedDefaultPlan(Math.max(now, core.now()));
+  return {
+    plan,
+    saved: !!sleepPlan,
+    setPlan: (patch) => core.setSleepPlan(patch),
+    resetIntervals: () => core.resetSleepIntervals(),
+  };
+}
+
+export interface ActiveSleepSessionHook {
+  session: SleepSession | null;
+  others: SleepSession[];
+  timer: SleepTimerState | null;
+  startSleepSession: FeedCore['startSleepSession'];
+  setPutDown: FeedCore['setPutDown'];
+  markAsleep: FeedCore['markAsleep'];
+  endSleepSession: FeedCore['endSleepSession'];
+  discardSleepSession: FeedCore['discardSleepSession'];
+  addSleepEvent: FeedCore['addSleepEvent'];
+  deleteSleepEvent: FeedCore['deleteSleepEvent'];
+  setNightNumberOverride: FeedCore['setNightNumberOverride'];
+}
+
+/** Newest open sleep session, live-ticking timer (1 s), plus actions. */
+export function useActiveSleepSession(): ActiveSleepSessionHook {
+  const core = useCore();
+  const { sleepSessions, sleepPlan } = useSnapshot();
+  const now = useNow(1000);
+  const at = Math.max(now, core.now());
+  const view = useMemo(() => activeSleepView(sleepSessions, effectivePlan(sleepPlan, at), at), [sleepSessions, sleepPlan, at]);
+  return {
+    ...view,
+    startSleepSession: (input) => core.startSleepSession(input),
+    setPutDown: (id, at) => core.setPutDown(id, at),
+    markAsleep: (id, at) => core.markAsleep(id, at),
+    endSleepSession: (id, at) => core.endSleepSession(id, at),
+    discardSleepSession: (id) => core.discardSleepSession(id),
+    addSleepEvent: (id, kind, opts) => core.addSleepEvent(id, kind, opts),
+    deleteSleepEvent: (id, ev) => core.deleteSleepEvent(id, ev),
+    setNightNumberOverride: (id, n) => core.setNightNumberOverride(id, n),
+  };
+}
+
+export function useSleepTimer(sessionId: string, intervalMs = 1000): SleepTimerState | null {
+  const core = useCore();
+  const { sleepSessions, sleepPlan } = useSnapshot();
+  const now = useNow(intervalMs);
+  return useMemo(() => {
+    const s = sleepSessions.find((x) => x.id === sessionId);
+    if (!s) return null;
+    const at = Math.max(now, core.now());
+    return timerState(s, effectivePlan(sleepPlan, at), at);
+  }, [sleepSessions, sleepPlan, sessionId, now, core]);
+}
+
+export function useSleepMetrics(range?: FeedRange): { sessions: SleepSessionMetrics[]; trend: SleepTrend } {
+  const sessions = useSleepSessions(range);
+  const { sleepPlan } = useSnapshot();
+  const core = useCore();
+  const now = useNow(60_000);
+  return useMemo(() => {
+    const at = Math.max(now, core.now());
+    const plan = effectivePlan(sleepPlan, at);
+    return { sessions: sessions.map((s) => sessionMetrics(s, plan, at)), trend: sleepTrend(sessions, plan, at) };
+  }, [sessions, sleepPlan, now, core]);
 }
 
 // ── Nara import ──────────────────────────────────────────

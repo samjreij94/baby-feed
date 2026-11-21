@@ -38,6 +38,7 @@ class SqlHouseholdStorage implements HouseholdStorage {
     // Additive tables for "Still feeding?" web-push reminders (entries are never touched).
     sql.exec(`CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, member_id TEXT NOT NULL)`);
     sql.exec(`CREATE TABLE IF NOT EXISTS push_alerts (feed_id TEXT PRIMARY KEY, n INTEGER NOT NULL)`);
+    sql.exec(`CREATE TABLE IF NOT EXISTS sleep_alerts (k TEXT PRIMARY KEY)`);
   }
   runningBreasts(): BreastFeedLike[] {
     return this.sql
@@ -67,6 +68,26 @@ class SqlHouseholdStorage implements HouseholdStorage {
   }
   setAlertN(feedId: string, n: number): void {
     this.sql.exec(`INSERT INTO push_alerts (feed_id, n) VALUES (?, ?) ON CONFLICT(feed_id) DO UPDATE SET n = excluded.n`, feedId, n);
+  }
+  getEntry(id: string) {
+    const rows = this.sql.exec<{ json: string }>(`SELECT json FROM entries WHERE id = ?`, id).toArray();
+    return rows.length ? (JSON.parse(rows[0]!.json) as Entry) : null;
+  }
+  openSleepSessions() {
+    return this.sql
+      .exec<{ json: string }>(`SELECT json FROM entries WHERE kind = 'sleep_session' AND deleted = 0 AND json_extract(json, '$.endedAt') IS NULL`)
+      .toArray()
+      .map((r) => JSON.parse(r.json) as import('../../src/core/types.ts').SleepSession);
+  }
+  sleepPlan() {
+    const e = this.getEntry('sleep-plan');
+    return e?.kind === 'sleep_plan' && !e.deleted ? e : null;
+  }
+  hasSleepAlert(key: string): boolean {
+    return this.sql.exec<{ k: string }>(`SELECT k FROM sleep_alerts WHERE k = ?`, key).toArray().length > 0;
+  }
+  putSleepAlert(key: string): void {
+    this.sql.exec(`INSERT INTO sleep_alerts (k) VALUES (?) ON CONFLICT(k) DO NOTHING`, key);
   }
   getMeta(): HouseholdMeta | null {
     const rows = this.sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'meta'`).toArray();
@@ -147,7 +168,7 @@ export class HouseholdDO extends DurableObject<Env> implements HouseholdApi {
 
   /** Alarm: send due "Still feeding?" reminders, then arm the next one. */
   async alarm(): Promise<void> {
-    const next = await this.household.runAlerts(Date.now(), (sub) => sendPush(sub, this.env));
+    const next = await this.household.runAlerts(Date.now(), (sub, payload) => sendPush(sub, this.env, fetch, payload));
     if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, Date.now() + 1000));
   }
 }

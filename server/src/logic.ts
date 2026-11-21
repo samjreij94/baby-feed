@@ -4,7 +4,16 @@
  */
 import { validAmountOz, validateBreast } from '../../src/core/feed.ts';
 import { compareVersion } from '../../src/core/merge.ts';
-import type { Entry, Member, SyncResponse } from '../../src/core/types.ts';
+import {
+  MAX_SLEEP_SESSION_BYTES,
+  effectivePlan,
+  mergeSleepSession,
+  sleepContentEqual,
+  timerState,
+  validSleepPlanFields,
+  validSleepSessionFields,
+} from '../../src/core/sleep.ts';
+import type { Entry, Member, SleepPlan, SleepSession, SyncResponse } from '../../src/core/types.ts';
 
 export const LIMITS = {
   /** Max entries per sync request (client sends ≤ this). */
@@ -13,6 +22,8 @@ export const LIMITS = {
   pageSize: 500,
   /** Max serialized size of one entry. */
   maxEntryBytes: 8 * 1024,
+  /** Sleep sessions may hold up to 200 events (SPEC §8c). */
+  maxSleepSessionBytes: MAX_SLEEP_SESSION_BYTES,
   /** Max request body. */
   maxBodyBytes: 256 * 1024,
   /** updatedAt may be at most this far in the future (server clock). */
@@ -66,7 +77,8 @@ export function validateEntry(e: unknown, householdId: string, now: number): str
   } catch {
     return 'not serializable';
   }
-  if (size > LIMITS.maxEntryBytes) return 'entry too large';
+  const maxBytes = e.kind === 'sleep_session' ? LIMITS.maxSleepSessionBytes : LIMITS.maxEntryBytes;
+  if (size > maxBytes) return 'entry too large';
   switch (e.kind) {
     case 'member':
       return isStr(e.name, LIMITS.maxName) ? null : 'bad name';
@@ -84,6 +96,10 @@ export function validateEntry(e: unknown, householdId: string, now: number): str
       if (!isNum(e.at)) return 'bad at';
       if (typeof e.grams !== 'number' || !Number.isFinite(e.grams) || e.grams < 100 || e.grams > 30_000) return 'bad grams';
       return null;
+    case 'sleep_plan':
+      return validSleepPlanFields(e);
+    case 'sleep_session':
+      return validSleepSessionFields(e);
     case 'breast': {
       if (!isNum(e.startedAt)) return 'bad startedAt';
       if (e.endedAt !== null && !isNum(e.endedAt)) return 'bad endedAt';
@@ -131,6 +147,15 @@ export interface HouseholdStorage {
   /** Last reminder number already sent per feed id. */
   getAlertN(feedId: string): number;
   setAlertN(feedId: string, n: number): void;
+  /** Latest stored entry, if any. */
+  getEntry(id: string): Entry | null;
+  /** Live (not deleted) sleep sessions that have not ended. */
+  openSleepSessions(): SleepSession[];
+  /** Live sleep plan, or null. */
+  sleepPlan(): SleepPlan | null;
+  /** Dedup keys for sleep check-in / nap-cap pushes. */
+  hasSleepAlert(key: string): boolean;
+  putSleepAlert(key: string): void;
 }
 
 export interface BreastFeedLike {
@@ -201,6 +226,26 @@ export class MemoryHouseholdStorage implements HouseholdStorage {
   setAlertN(feedId: string, n: number) {
     this.alertN.set(feedId, n);
   }
+  getEntry(id: string) {
+    const r = this.rows.get(id);
+    return r ? (JSON.parse(r.json) as Entry) : null;
+  }
+  openSleepSessions() {
+    return [...this.rows.values()]
+      .map((r) => JSON.parse(r.json) as Entry)
+      .filter((e): e is SleepSession => e.kind === 'sleep_session' && !e.deleted && e.endedAt == null);
+  }
+  sleepPlan() {
+    const e = this.getEntry('sleep-plan');
+    return e?.kind === 'sleep_plan' && !e.deleted ? e : null;
+  }
+  private sleepAlerts = new Set<string>();
+  hasSleepAlert(key: string) {
+    return this.sleepAlerts.has(key);
+  }
+  putSleepAlert(key: string) {
+    this.sleepAlerts.add(key);
+  }
   get size() {
     return this.rows.size;
   }
@@ -255,6 +300,15 @@ export class Household {
         continue;
       }
       const e = raw as Entry;
+      if (e.kind === 'sleep_session') {
+        const stored = this.store.getEntry(e.id);
+        if (stored?.kind === 'sleep_session') {
+          const merged = mergeSleepSession(stored, e);
+          if (sleepContentEqual(merged, stored) && compareVersion(merged, stored) === 0) continue;
+          this.store.put(merged, ++seq);
+          continue;
+        }
+      }
       const cur = this.store.getVersion(e.id);
       if (cur && compareVersion(e, cur) <= 0) continue; // older or same version: ignore
       this.store.put(e, ++seq);
@@ -287,13 +341,28 @@ export class Household {
   nextAlertAt(now: number): number | null {
     if (!this.hasSubs()) return null;
     let next: number | null = null;
+    const consider = (at: number | null | undefined) => {
+      if (at == null) return;
+      if (next === null || at < next) next = at;
+    };
     for (const f of this.store.runningBreasts()) {
       const e = nursingMs(f, now);
       // Overdue (e.g. the start time was moved earlier) -> `at` is in the past and fires right away.
       const n = this.store.getAlertN(f.id) + 1;
       if (n > MAX_ALERTS) continue;
-      const at = now + (n * ALERT_EVERY_MS - e);
-      if (next === null || at < next) next = at;
+      consider(now + (n * ALERT_EVERY_MS - e));
+    }
+    const plan = effectivePlan(this.store.sleepPlan(), now);
+    for (const s of this.store.openSleepSessions()) {
+      const st = timerState(s, plan, now);
+      if (st.dueAt != null) {
+        const key = `${s.id}:${st.checkIndex}:${st.cryStartedAt ?? 0}`;
+        if (!this.store.hasSleepAlert(key) || st.dueAt > now) consider(st.dueAt);
+      }
+      if (st.napCapDueAt != null) {
+        const key = `${s.id}:napcap:${st.attemptStartedAt ?? 0}`;
+        if (!this.store.hasSleepAlert(key) || st.napCapDueAt > now) consider(st.napCapDueAt);
+      }
     }
     return next;
   }
@@ -308,7 +377,25 @@ export class Household {
       const all = this.store.subs();
       const mine = all.filter((s) => s.memberId === f.loggedBy.id);
       for (const sub of mine.length ? mine : all) {
-        if ((await send(sub)) === 'gone') this.store.delSub(sub.endpoint);
+        if ((await send(sub, { type: 'still_feeding' })) === 'gone') this.store.delSub(sub.endpoint);
+      }
+    }
+    const plan = effectivePlan(this.store.sleepPlan(), now);
+    for (const s of this.store.openSleepSessions()) {
+      const st = timerState(s, plan, now);
+      const jobs: Array<{ key: string; payload: PushPayload }> = [];
+      if (st.phase === 'crying' && st.dueAt != null && st.dueAt <= now) {
+        jobs.push({ key: `${s.id}:${st.checkIndex}:${st.cryStartedAt ?? 0}`, payload: { type: 'sleep_check', sessionId: s.id } });
+      }
+      if (st.napCapDueAt != null && st.napCapDueAt <= now && st.phase !== 'asleep' && st.phase !== 'ended' && st.phase !== 'pre_putdown') {
+        jobs.push({ key: `${s.id}:napcap:${st.attemptStartedAt ?? 0}`, payload: { type: 'sleep_nap_cap', sessionId: s.id } });
+      }
+      for (const job of jobs) {
+        if (this.store.hasSleepAlert(job.key)) continue;
+        this.store.putSleepAlert(job.key);
+        for (const sub of this.store.subs()) {
+          if ((await send(sub, job.payload)) === 'gone') this.store.delSub(sub.endpoint);
+        }
       }
     }
     return this.nextAlertAt(now);
@@ -328,8 +415,10 @@ export function nursingMs(f: BreastFeedLike, now: number): number {
   return t;
 }
 
+export type PushPayload = { type: 'still_feeding' | 'sleep_check' | 'sleep_nap_cap'; sessionId?: string };
+
 /** Returns true when the push was delivered or should simply be retried later; 'gone' = subscription expired (delete it). */
-export type PushSender = (sub: PushSub) => Promise<'ok' | 'gone' | 'fail'>;
+export type PushSender = (sub: PushSub, payload?: PushPayload) => Promise<'ok' | 'gone' | 'fail'>;
 
 export function validPushSub(x: unknown): PushSub | null {
   if (!isObj(x)) return null;

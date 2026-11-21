@@ -7,10 +7,29 @@ import * as F from './feed';
 import { validGrams } from './weight';
 import { formatInviteCode, inviteLink, parseInvite } from './invite';
 import { compareVersion, nextUpdatedAt } from './merge';
+import { localDateKey } from './metrics';
+import {
+  SLEEP_PLAN_ID,
+  defaultSleepIntervals,
+  defaultSleepPlanFields,
+  effectivePlan,
+  isMorningWake,
+  isOpenSleepSession,
+  mergeSleepSession,
+  normalizePlanPatch,
+  sessionAttributionDate,
+  sleepContentEqual,
+  timerState,
+  unsavedDefaultPlan,
+  validSleepEvent,
+  validSleepSessionFields,
+  MAX_SLEEP_EVENTS,
+} from './sleep';
 import { createIdbStorage, createMemoryStorage, defaultSyncKv, KEY, Mirror, type KvStorage, type PersistedMeta, type SyncKv } from './storage';
 import type {
   AddBottleInput,
   AddManualBreastInput,
+  AddSleepEventOpts,
   AddWeightInput,
   BottleFeed,
   BreastFeed,
@@ -23,6 +42,13 @@ import type {
   Member,
   MemberEntry,
   Side,
+  SleepEvent,
+  SleepEventKind,
+  SleepPlan,
+  SleepPlanPatch,
+  SleepSession,
+  SleepSessionPatch,
+  SleepSessionType,
   SyncResponse,
   SyncState,
   WeightEntry,
@@ -49,6 +75,10 @@ export interface CoreSnapshot {
   feeds: Feed[];
   /** Non-deleted weight entries, newest first. */
   weights: WeightEntry[];
+  /** Non-deleted sleep sessions, newest startedAt first. */
+  sleepSessions: SleepSession[];
+  /** The stored sleep plan, or null if none has been saved yet. */
+  sleepPlan: SleepPlan | null;
   members: Member[];
   me: Member | null;
   householdId: string | null;
@@ -223,6 +253,10 @@ export class FeedCore {
     const all = [...this.entries.values()].filter((e) => !e.deleted);
     const feeds = all.filter((e): e is Feed => e.kind === 'breast' || e.kind === 'bottle').sort((a, b) => F.feedStart(b) - F.feedStart(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const weights = all.filter((e): e is WeightEntry => e.kind === 'weight').sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const sleepSessions = all
+      .filter((e): e is SleepSession => e.kind === 'sleep_session')
+      .sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const sleepPlan = all.find((e): e is SleepPlan => e.kind === 'sleep_plan') ?? null;
     const members = all
       .filter((e): e is MemberEntry => e.kind === 'member')
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -232,6 +266,8 @@ export class FeedCore {
     return {
       feeds,
       weights,
+      sleepSessions,
+      sleepPlan,
       members,
       me,
       householdId: this.meta.householdId,
@@ -282,7 +318,11 @@ export class FeedCore {
 
   private writeMirror() {
     const ids = new Set(this.localUnflushed);
-    for (const e of this.entries.values()) if (isActiveBreast(e)) ids.add(e.id);
+    for (const e of this.entries.values()) {
+      if (isActiveBreast(e)) ids.add(e.id);
+      if (isOpenSleepSession(e)) ids.add(e.id);
+      if (e.kind === 'sleep_plan' && !e.deleted) ids.add(e.id);
+    }
     const list = [...ids].map((id) => this.entries.get(id)).filter((e): e is Entry => !!e);
     this.mirror.write(this.meta, list);
   }
@@ -497,7 +537,7 @@ export class FeedCore {
     return this.put(next, cur);
   }
 
-  /** Tombstone a feed or weight (deleted: true; syncs). */
+  /** Tombstone a feed, weight, sleep session, or plan (deleted: true; syncs). */
   async deleteEntry(id: string): Promise<void> {
     await this.ready;
     const cur = this.entries.get(id);
@@ -546,6 +586,170 @@ export class FeedCore {
       this.scheduleSoonSync();
     }
     return r;
+  }
+
+
+  // ── sleep training (SPEC §8c) ──
+  private storedSleepPlan(): SleepPlan | null {
+    const e = this.entries.get(SLEEP_PLAN_ID);
+    return e?.kind === 'sleep_plan' && !e.deleted ? e : null;
+  }
+
+  private clampAt(at: number | undefined, now: number): number {
+    const t = at === undefined ? now : at;
+    if (!Number.isFinite(t)) throw new Error('Pick a valid time.');
+    return Math.min(Math.round(t), now);
+  }
+
+  private requireSession(id: string): SleepSession {
+    const cur = this.entries.get(id);
+    if (!cur || cur.deleted || cur.kind !== 'sleep_session') throw new Error(`No sleep session ${id}`);
+    return cur;
+  }
+
+  private writePlan(fields: Pick<SleepPlan, 'startDate' | 'wakeCutoffMinutes' | 'intervals'>, prev?: SleepPlan | null): SleepPlan {
+    const now = this.now();
+    const me = this.requireMe();
+    const e: SleepPlan =
+      prev?.kind === 'sleep_plan'
+        ? { ...prev, ...fields, deleted: false, loggedBy: me }
+        : { ...this.base(now), id: SLEEP_PLAN_ID, kind: 'sleep_plan', ...fields };
+    return this.put(e, prev ?? undefined);
+  }
+
+  private ensurePlanFor(session: Pick<SleepSession, 'type' | 'startedAt' | 'putDownAt'>): SleepPlan {
+    const cur = this.storedSleepPlan();
+    if (cur) return cur;
+    const tmp = unsavedDefaultPlan(this.now());
+    const date = sessionAttributionDate({ ...tmp, ...session, kind: 'sleep_session', events: [], asleepAt: null, endedAt: null } as SleepSession, tmp);
+    return this.writePlan(defaultSleepPlanFields(date));
+  }
+
+  async startSleepSession(input: { type: SleepSessionType; startedAt?: number; putDownAt?: number }): Promise<SleepSession> {
+    await this.ready;
+    if (input.type !== 'night' && input.type !== 'nap') throw new Error('Session must be a night or a nap');
+    const now = this.now();
+    const startedAt = this.clampAt(input.startedAt, now);
+    const putDownAt = input.putDownAt === undefined ? null : this.clampAt(input.putDownAt, now);
+    this.ensurePlanFor({ type: input.type, startedAt, putDownAt });
+    const e: SleepSession = {
+      ...this.base(now),
+      kind: 'sleep_session',
+      type: input.type,
+      startedAt,
+      putDownAt,
+      asleepAt: null,
+      endedAt: null,
+      events: [],
+    };
+    return this.put(e);
+  }
+
+  async setPutDown(id: string, at?: number): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(id);
+    if (cur.endedAt != null) return cur;
+    const putDownAt = this.clampAt(at, this.now());
+    if (cur.putDownAt === putDownAt) return cur;
+    return this.put({ ...cur, putDownAt }, cur);
+  }
+
+  async markAsleep(id: string, at?: number): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(id);
+    if (cur.endedAt != null) return cur;
+    const when = this.clampAt(at, this.now());
+    const events = [...cur.events, this.newSleepEvent('asleep', when)];
+    return this.put({ ...cur, asleepAt: cur.asleepAt ?? when, events }, cur);
+  }
+
+  async endSleepSession(id: string, at?: number): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(id);
+    if (cur.endedAt != null) return cur;
+    return this.put({ ...cur, endedAt: this.clampAt(at, this.now()) }, cur);
+  }
+
+  async discardSleepSession(id: string): Promise<void> {
+    return this.deleteEntry(id);
+  }
+
+  private newSleepEvent(kind: SleepEventKind, at: number, text?: string): SleepEvent {
+    const ev: SleepEvent = { id: crypto.randomUUID(), kind, at, loggedBy: this.requireMe(), deviceId: this.deviceId };
+    if (text !== undefined) ev.text = text;
+    return ev;
+  }
+
+  async addSleepEvent(id: string, kind: SleepEventKind, opts: AddSleepEventOpts = {}): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(id);
+    if (cur.endedAt != null) return cur;
+    if (kind === 'note' && !(opts.text && opts.text.trim())) throw new Error('A note needs text');
+    if (cur.events.length >= MAX_SLEEP_EVENTS) throw new Error('Too many events on this session');
+    const when = this.clampAt(opts.at, this.now());
+    const ev = this.newSleepEvent(kind, when, opts.text);
+    const evErr = validSleepEvent(ev);
+    if (evErr) throw new Error(evErr);
+    const events = [...cur.events, ev];
+    let endedAt: number | null = cur.endedAt;
+    if ((kind === 'cry_start' || kind === 'night_waking') && endedAt == null) {
+      const plan = effectivePlan(this.storedSleepPlan(), when);
+      const st = timerState(cur, plan, when);
+      if (st.phase === 'asleep' && isMorningWake(plan, cur, when)) endedAt = when;
+    }
+    return this.put({ ...cur, events, endedAt }, cur);
+  }
+
+  async deleteSleepEvent(sessionId: string, eventId: string): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(sessionId);
+    const ev = cur.events.find((e) => e.id === eventId);
+    if (!ev) throw new Error(`No event ${eventId}`);
+    if (ev.deleted) return cur;
+    const events = cur.events.map((e) => (e.id === eventId ? { ...e, deleted: true } : e));
+    return this.put({ ...cur, events }, cur);
+  }
+
+  async setNightNumberOverride(id: string, n: number | null): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(id);
+    if (n === null) {
+      if (cur.nightNumberOverride === null) return cur;
+      return this.put({ ...cur, nightNumberOverride: null }, cur);
+    }
+    if (!Number.isFinite(n) || n < 1) throw new Error('Night number must be 1 or more');
+    const v = Math.floor(n);
+    if (cur.nightNumberOverride === v) return cur;
+    return this.put({ ...cur, nightNumberOverride: v }, cur);
+  }
+
+  async editSleepSession(id: string, patch: SleepSessionPatch): Promise<SleepSession> {
+    await this.ready;
+    const cur = this.requireSession(id);
+    const next: SleepSession = { ...cur, ...patch, events: cur.events };
+    const reason = validSleepSessionFields(next as unknown as Record<string, unknown>);
+    if (reason) throw new Error(reason);
+    return this.put(next, cur);
+  }
+
+  async setSleepPlan(patch: SleepPlanPatch): Promise<SleepPlan> {
+    await this.ready;
+    const prev = this.storedSleepPlan() ?? (this.entries.get(SLEEP_PLAN_ID)?.kind === 'sleep_plan' ? (this.entries.get(SLEEP_PLAN_ID) as SleepPlan) : null);
+    const norm = normalizePlanPatch(prev, patch, localDateKey(this.now()));
+    if (!norm.ok) throw new Error(norm.reason);
+    return this.writePlan(norm.fields, prev);
+  }
+
+  async resetSleepIntervals(): Promise<SleepPlan> {
+    await this.ready;
+    const prev = this.storedSleepPlan();
+    const fields = defaultSleepPlanFields(prev?.startDate ?? localDateKey(this.now()));
+    if (prev) {
+      fields.startDate = prev.startDate;
+      fields.wakeCutoffMinutes = prev.wakeCutoffMinutes;
+      fields.intervals = defaultSleepIntervals();
+    }
+    return this.writePlan(fields, prev);
   }
 
   // ── household ──
@@ -749,9 +953,31 @@ export class FeedCore {
       this.meta.clockOffsetMs = next;
     }
 
-    // apply remote (LWW)
+    // apply remote (LWW; sleep_session unions events — SPEC §8c.3)
     for (const inc of res.changes) {
       const cur = this.entries.get(inc.id);
+      if (inc.kind === 'sleep_session' && cur?.kind === 'sleep_session') {
+        const merged = mergeSleepSession(cur, inc);
+        if (sleepContentEqual(merged, cur) && compareVersion(merged, cur) === 0) continue;
+        this.entries.set(inc.id, merged);
+        this.dirtyEntries.add(inc.id);
+        if (this.outbox.has(inc.id)) {
+          if (!sleepContentEqual(merged, inc)) {
+            if (compareVersion(merged, inc) <= 0) {
+              const bumped: SleepSession = {
+                ...merged,
+                updatedAt: nextUpdatedAt(Math.max(merged.updatedAt, inc.updatedAt), this.now()),
+                deviceId: this.deviceId,
+              };
+              this.entries.set(inc.id, bumped);
+            }
+            this.markOutbox(inc.id, true);
+          } else {
+            this.markOutbox(inc.id, false);
+          }
+        }
+        continue;
+      }
       if (cur && compareVersion(inc, cur) <= 0) continue;
       this.entries.set(inc.id, inc);
       this.dirtyEntries.add(inc.id);

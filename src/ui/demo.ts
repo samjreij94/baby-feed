@@ -10,7 +10,7 @@
  *   - ?demo=remote — the other parent starts a breast feed on their phone; it reaches this phone via /api/sync.
  *   - ?demo=fresh  — no seeded history.   ?demo=reset — wipe the demo database + server first.
  */
-import { FeedCore, type BreastFeed, type Entry, type Feed, type Member, type Side } from '../core';
+import { FeedCore, type BreastFeed, type Entry, type Feed, type Member, type Side, type SleepSession } from '../core';
 import { handleRequest, type AppDeps } from '../../server/src/app.ts';
 import { Household, householdApi, type HouseholdMeta, type HouseholdStorage, type PushSub } from '../../server/src/logic.ts';
 
@@ -67,6 +67,20 @@ class LocalHouseholdStorage implements HouseholdStorage {
   subs() { return [...this.subs_.values()]; }
   getAlertN(feedId: string) { return this.alerts.get(feedId) ?? 0; }
   setAlertN(feedId: string, n: number) { this.alerts.set(feedId, n); }
+  getEntry(id: string) {
+    const r = this.rows[id];
+    return r ? (JSON.parse(r.json) as Entry) : null;
+  }
+  openSleepSessions() {
+    return Object.values(this.rows).map((r) => JSON.parse(r.json) as Entry).filter((e): e is SleepSession => e.kind === 'sleep_session' && !e.deleted && e.endedAt == null);
+  }
+  sleepPlan() {
+    const e = this.getEntry('sleep-plan');
+    return e?.kind === 'sleep_plan' && !e.deleted ? e : null;
+  }
+  private sleepAlerts = new Set<string>();
+  hasSleepAlert(key: string) { return this.sleepAlerts.has(key); }
+  putSleepAlert(key: string) { this.sleepAlerts.add(key); }
   flush() { if (this.dirty) { try { this.kv?.setItem(this.key, JSON.stringify({ meta: this.meta, rows: this.rows })); } catch { /* quota */ } this.dirty = false; } }
 }
 
