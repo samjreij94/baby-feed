@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BarChart, LineChart, niceMinutes } from '../components/Charts';
+import { BottomSheet } from '../components/BottomSheet';
 import { IconMoon } from '../components/Icons';
 import { Segmented } from '../components/Segmented';
 import {
@@ -8,8 +9,11 @@ import {
   useHousehold,
   useSleepMetrics,
   useSleepPlan,
+  useSleepSessions,
+  type SleepEvent,
   type SleepEventKind,
   type SleepIntervalRow,
+  type SleepSession,
   type SleepSessionMetrics,
   type SleepSessionType,
   NAP_CAP_MS,
@@ -29,6 +33,16 @@ const DIM_KEY = 'bf.ui.sleepDim.v1';
 
 function loadDim(): boolean {
   try { return localStorage.getItem(DIM_KEY) === 'on'; } catch { return false; }
+}
+
+const NOTE_MAX = 1000;
+
+function liveNotes(session: SleepSession | null | undefined): SleepEvent[] {
+  if (!session) return [];
+  return session.events
+    .filter((e) => e.kind === 'note' && !e.deleted && (e.text ?? '').trim())
+    .slice()
+    .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
 
 export function SleepScreen() {
@@ -73,12 +87,21 @@ function TonightPanel() {
   const sleep = useActiveSleepSession();
   const { session, others, timer } = sleep;
   const [prefer, setPrefer] = useState<SleepSessionType>('night');
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
   const fail = (e: unknown) => console.warn('[sleep]', e);
   const id = session?.id;
   const go = (kind: SleepEventKind) => {
     if (!id) return Promise.resolve();
     return sleep.addSleepEvent(id, kind).catch(fail);
   };
+  const closeNote = () => { setNoteOpen(false); setNoteText(''); };
+  const saveNote = () => {
+    const text = noteText.trim().slice(0, NOTE_MAX);
+    if (!id || !text) return Promise.resolve();
+    return sleep.addSleepEvent(id, 'note', { text }).then(closeNote).catch(fail);
+  };
+  const notes = liveNotes(session);
 
   const phase = timer?.phase ?? 'idle';
   const idle = !session;
@@ -205,6 +228,7 @@ function TonightPanel() {
               <button type="button" className="btn sleep-grid-btn" onClick={() => go('night_waking')}>Night waking</button>
             )}
             <button type="button" className="btn sleep-grid-btn" onClick={() => go('planned_night_feed')}>Planned feed</button>
+            <button type="button" className="btn sleep-grid-btn" onClick={() => setNoteOpen(true)}>Note</button>
             {id && (
               <button type="button" className="btn sleep-grid-btn" onClick={() => sleep.endSleepSession(id).catch(fail)}>
                 {mode === 'nap' ? 'End nap' : 'Morning (end)'}
@@ -213,6 +237,47 @@ function TonightPanel() {
           </div>
         )}
       </div>
+
+      {notes.length > 0 && (
+        <ul className="sleep-notes" data-testid="sleep-notes">
+          {notes.map((n) => (
+            <li key={n.id}>
+              <span className="sleep-note-time">{fmtTime(n.at)}</span>
+              <span>{n.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <BottomSheet
+        open={noteOpen}
+        onClose={closeNote}
+        title="Note"
+        footer={
+          <button
+            type="button"
+            className="btn btn-lg btn-primary"
+            disabled={!id || !noteText.trim()}
+            onClick={() => saveNote()}
+          >
+            Save note
+          </button>
+        }
+      >
+        <label className="field">
+          <div className="caption">Quick note for this session</div>
+          <textarea
+            className="input sleep-note-input"
+            aria-label="Sleep note"
+            value={noteText}
+            maxLength={NOTE_MAX}
+            rows={4}
+            autoFocus
+            placeholder="Lights, pacifier, a feeding…"
+            onChange={(e) => setNoteText(e.target.value.slice(0, NOTE_MAX))}
+          />
+        </label>
+      </BottomSheet>
     </div>
   );
 }
@@ -330,6 +395,8 @@ function PlanPanel() {
 
 function HistoryPanel() {
   const { trend } = useSleepMetrics();
+  const sessions = useSleepSessions();
+  const notesBySession = new Map(sessions.map((s) => [s.id, liveNotes(s)]));
   const nights = trend.nights;
   const naps = trend.naps;
 
@@ -348,7 +415,7 @@ function HistoryPanel() {
         <h2 className="day-head"><span>Nights</span><span className="dim num">{nights.length}</span></h2>
         {nights.length === 0 ? <p className="dim small">No nights logged yet.</p> : (
           <ul className="rows">
-            {nights.slice().reverse().map((r) => <SummaryRow key={r.sessionId} row={r} />)}
+            {nights.slice().reverse().map((r) => <SummaryRow key={r.sessionId} row={r} notes={notesBySession.get(r.sessionId) ?? []} />)}
           </ul>
         )}
       </section>
@@ -356,7 +423,7 @@ function HistoryPanel() {
         <section aria-label="Naps">
           <h2 className="day-head"><span>Naps</span><span className="dim num">{naps.length}</span></h2>
           <ul className="rows">
-            {naps.slice().reverse().map((r) => <SummaryRow key={r.sessionId} row={r} />)}
+            {naps.slice().reverse().map((r) => <SummaryRow key={r.sessionId} row={r} notes={notesBySession.get(r.sessionId) ?? []} />)}
           </ul>
         </section>
       )}
@@ -364,7 +431,7 @@ function HistoryPanel() {
   );
 }
 
-function SummaryRow({ row }: { row: SleepSessionMetrics }) {
+function SummaryRow({ row, notes }: { row: SleepSessionMetrics; notes: SleepEvent[] }) {
   const title = row.type === 'nap' ? 'Nap' : `Night ${row.nightNumber}`;
   const timeTo = row.timeToAsleepMs != null ? row.timeToAsleepMs / 60_000 : null;
   const crying = row.cryingMs / 60_000;
@@ -375,7 +442,7 @@ function SummaryRow({ row }: { row: SleepSessionMetrics }) {
     `${row.wakings} waking${row.wakings === 1 ? '' : 's'}`,
   ].join(' · ');
   return (
-    <li className="h-row">
+    <li className="h-row sleep-hist-row">
       <div className="h-main">
         <span className="kind-ic kind-sleep" aria-hidden>{row.type === 'nap' ? 'n' : `N${Math.min(row.nightNumber, 7)}`}</span>
         <span className="h-text">
@@ -387,6 +454,16 @@ function SummaryRow({ row }: { row: SleepSessionMetrics }) {
           <span className="dim num">{fmtTime(row.startedAt)}</span>
         </span>
       </div>
+      {notes.length > 0 && (
+        <ul className="sleep-notes sleep-notes-hist" data-testid="sleep-hist-notes">
+          {notes.map((n) => (
+            <li key={n.id}>
+              <span className="sleep-note-time">{fmtTime(n.at)}</span>
+              <span>{n.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </li>
   );
 }

@@ -150,5 +150,40 @@ describe('Sleep tab', () => {
     expect(cssText).toMatch(/\.sleep-grid-btn \{ min-height: var\(--tap-lg\);/);
     expect(cssText).toMatch(/\.sleep-int \{ min-height: var\(--tap\);/);
     expect(cssText).toMatch(/\.tabbar button \{[^}]*min-height: 48px/);
+    expect(cssText).toMatch(/\.sleep-note-input \{[^}]*min-height: 96px/);
+  });
+
+  it('hides Note until a session is open, then saves a note on the session', async () => {
+    const t = testCore();
+    await t.core.createHousehold('Samir');
+    renderApp(t.core);
+    await openSleep();
+    expect(screen.queryByRole('button', { name: 'Note' })).toBeNull();
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start bedtime / Put down' })); });
+    expect(await screen.findByRole('button', { name: 'Note' })).toBeInTheDocument();
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Note' })); });
+    const sheet = await screen.findByRole('dialog', { name: 'Note' });
+    const input = within(sheet).getByLabelText('Sleep note');
+    expect(within(sheet).getByRole('button', { name: 'Save note' })).toBeDisabled();
+
+    await act(async () => { fireEvent.change(input, { target: { value: '  ' } }); });
+    expect(within(sheet).getByRole('button', { name: 'Save note' })).toBeDisabled();
+
+    await act(async () => { fireEvent.change(input, { target: { value: 'Pacifier fell out' } }); });
+    await act(async () => { fireEvent.click(within(sheet).getByRole('button', { name: 'Save note' })); });
+
+    expect(await screen.findByTestId('sleep-notes')).toHaveTextContent('Pacifier fell out');
+    expect(screen.queryByRole('dialog', { name: 'Note' })).toBeNull();
+    const sess = t.core.getSnapshot().sleepSessions[0]!;
+    expect(sess.events.some((e) => e.kind === 'note' && e.text === 'Pacifier fell out')).toBe(true);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Morning (end)' })); });
+    expect(await screen.findByRole('button', { name: 'Start bedtime / Put down' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Note' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'History' }));
+    expect(await screen.findByTestId('sleep-hist-notes')).toHaveTextContent('Pacifier fell out');
   });
 });

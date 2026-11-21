@@ -570,3 +570,17 @@ h2.section { font-size: 13px; letter-spacing: .07em; text-transform: uppercase; 
 .sleep-int { min-height: var(--tap); width: 100%; padding: 0 6px; text-align: center; font-variant-numeric: tabular-nums; }
 .sleep-table td { padding: 6px 4px; vertical-align: middle; }
 .sleep-reset { margin: 12px 0 8px; min-height: var(--tap); }
+
+.sleep-notes { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sleep-notes li {
+  background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px;
+  font-size: 15px; line-height: 1.35; color: var(--text);
+}
+.sleep-note-time { display: block; font-size: 12px; font-weight: 650; color: var(--text-dim); margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+.sleep-note-input {
+  min-height: 96px; height: auto; padding: 12px 14px; resize: vertical;
+  line-height: 1.35; color: var(--text);
+}
+.sleep-hist-row { flex-direction: column; align-items: stretch; }
+.sleep-notes-hist { margin: 0 12px 10px 52px; }
+
