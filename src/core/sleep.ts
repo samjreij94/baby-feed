@@ -267,7 +267,8 @@ function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk
 
     switch (ev.kind) {
       case 'night_waking': {
-        if (w.endedAt) break;
+        // Do not skip just because session.endedAt is already set: events at or
+        // before endedAt still count (History metrics after Morning (end)).
         if (w.asleep) {
           applyWake(w, ev.at, false, isMorningWake(plan, session, ev.at));
         }
@@ -282,11 +283,11 @@ function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk
         if (w.pendingWake && ev.at === (w.attemptStartedAt ?? ev.at)) {
           // same-instant cry after an explicit night_waking: start crying, don't count again
           w.pendingWake = false;
-          if (!w.endedAt) startCry(w, ev.at);
+          startCry(w, ev.at);
           break;
         }
         w.pendingWake = false;
-        if (!w.inCheck && !w.endedAt) startCry(w, ev.at);
+        if (!w.inCheck) startCry(w, ev.at);
         break;
       }
       case 'cry_stop': {
@@ -296,7 +297,7 @@ function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk
       }
       case 'check_start': {
         w.pendingWake = false;
-        if (!w.inCheck && !w.endedAt) {
+        if (!w.inCheck) {
           w.wasCrying = w.crying;
           closeCry(w, ev.at);
           w.inCheck = true;
@@ -305,7 +306,7 @@ function walkSession(session: SleepSession, plan: SleepPlan, now: EpochMs): Walk
       }
       case 'check_end': {
         w.pendingWake = false;
-        if (w.inCheck && !w.endedAt) {
+        if (w.inCheck) {
           w.inCheck = false;
           w.checkIndex += 1;
           w.checks += 1;

@@ -146,4 +146,86 @@ describe('sleep store + sync', () => {
     expect(cur.events[0]!.deleted).toBe(true);
     expect(timerState(cur, reset, clock.now()).phase).toBe('quiet');
   });
+
+  it('queues the default plan and the session together so a listener cannot sync only the plan', async () => {
+    const { a, b, clock, server } = await pair();
+    const bodies: string[] = [];
+    const orig = server.fetch;
+    server.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.body) bodies.push(String(init.body));
+      return orig(input, init);
+    }) as typeof fetch;
+    a.core.subscribe(() => {
+      if (a.core.getSnapshot().sleepPlan && a.core.getSnapshot().sleepSessions.length === 0) {
+        void a.core.syncNow();
+      }
+    });
+    const s = await a.core.startSleepSession({ type: 'night', putDownAt: clock.now() });
+    await a.core.syncNow();
+    await b.core.syncNow();
+    server.fetch = orig;
+    expect(b.core.getSnapshot().sleepSessions.map((x) => x.id)).toEqual([s.id]);
+    expect(b.core.getSnapshot().sleepPlan?.id).toBe(SLEEP_PLAN_ID);
+    const split = bodies.filter((body) => body.includes('sleep_plan') && !body.includes('sleep_session'));
+    expect(split).toEqual([]);
+  });
+
+  it('going offline right after startSleepSession keeps both writes; a later sync delivers them', async () => {
+    const { a, b, clock } = await pair();
+    a.setOffline(true);
+    const s = await a.core.startSleepSession({ type: 'night', putDownAt: clock.now() });
+    await a.core.syncNow();
+    expect(a.core.getSnapshot().sync.state).toBe('offline');
+    expect(a.core.getSnapshot().sync.pending).toBeGreaterThanOrEqual(2);
+    await b.core.syncNow();
+    expect(b.core.getSnapshot().sleepSessions).toHaveLength(0);
+
+    a.setOffline(false);
+    await a.core.syncNow();
+    await b.core.syncNow();
+    expect(a.core.getSnapshot().sync).toMatchObject({ state: 'idle', pending: 0, error: null });
+    expect(b.core.getSnapshot().sleepPlan?.startDate).toBe('2026-11-20');
+    expect(b.core.getSnapshot().sleepSessions.map((x) => x.id)).toEqual([s.id]);
+  });
+
+  it('an in-flight sync snapshot that misses a new session keeps it queued; a later sync delivers it', async () => {
+    const { a, b, clock, server } = await pair();
+    await a.core.setSleepPlan({ startDate: '2026-11-20' });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const orig = server.fetch;
+    let n = 0;
+    server.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      n++;
+      if (n === 1) {
+        await gate;
+        const res = await orig(input, init);
+        a.setOffline(true);
+        return res;
+      }
+      throw new TypeError('Failed to fetch');
+    }) as typeof fetch;
+
+    const first = a.core.syncNow();
+    await new Promise((r) => setTimeout(r, 0));
+    const s = await a.core.startSleepSession({ type: 'night', putDownAt: clock.now() });
+    const second = a.core.syncNow();
+    release();
+    await first;
+    await second;
+    server.fetch = orig;
+
+    expect(a.core.getSnapshot().sleepSessions[0]!.id).toBe(s.id);
+    expect(a.core.getSnapshot().sync.pending).toBeGreaterThan(0);
+    await b.core.syncNow();
+    expect(b.core.getSnapshot().sleepPlan?.startDate).toBe('2026-11-20');
+    expect(b.core.getSnapshot().sleepSessions).toHaveLength(0);
+
+    a.setOffline(false);
+    await a.core.syncNow();
+    await b.core.syncNow();
+    expect(a.core.getSnapshot().sync).toMatchObject({ state: 'idle', pending: 0, error: null });
+    expect(b.core.getSnapshot().sleepSessions.map((x) => x.id)).toEqual([s.id]);
+  });
+
 });

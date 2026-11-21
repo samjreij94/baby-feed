@@ -517,6 +517,35 @@ describe('metrics + trend', () => {
     expect(m.nightNumber).toBe(1);
   });
 
+  it('an ended night still counts cries and checks up to endedAt', () => {
+    // History walks the session after Morning (end) has set endedAt. Events at
+    // or before that timestamp must still contribute; only later ones are ignored.
+    const endedAt = T0 + 8 * 60 * MIN;
+    const s = session({
+      putDownAt: T0,
+      asleepAt: T0 + 4 * MIN,
+      endedAt,
+      events: [
+        ev('cry_start', T0),
+        ev('check_start', T0 + 3 * MIN),
+        ev('check_end', T0 + 3 * MIN + 30_000),
+        ev('asleep', T0 + 4 * MIN),
+        ev('cry_start', endedAt + MIN, { id: 'after-end' }),
+        ev('check_start', endedAt + 2 * MIN, { id: 'after-check' }),
+        ev('check_end', endedAt + 3 * MIN, { id: 'after-end-check' }),
+      ],
+    });
+    const m = sessionMetrics(s, p, endedAt + 10 * MIN);
+    expect(m.checks).toBe(1);
+    expect(m.wakings).toBe(0);
+    expect(m.timeToAsleepMs).toBe(4 * MIN);
+    // crying: T0..T+3 (check start) + T+3:30..T+4 (resume after check until asleep)
+    expect(m.cryingMs).toBe(3 * MIN + 30_000);
+    const st = timerState(s, p, endedAt + 10 * MIN);
+    expect(st.phase).toBe('ended');
+    expect(st.endReason).toBe('manual');
+  });
+
   it('open cry counts up to now; trend splits nights and naps and sorts', () => {
     const p0 = plan('2026-11-20');
     const n1 = session({ id: 'n1', events: [ev('cry_start', T0 + MIN)] });

@@ -151,6 +151,8 @@ export class FeedCore {
   private localUnflushed = new Set<string>();
   private flushing: Promise<void> | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** >0 while a multi-put operation holds emit/auto-sync until every id is in the outbox. */
+  private suppressNotify = 0;
 
   // sync bookkeeping
   private syncState: SyncState = 'idle';
@@ -407,10 +409,26 @@ export class FeedCore {
     this.localUnflushed.add(v.id);
     this.markOutbox(v.id, true);
     this.writeMirror();
-    this.emit();
     this.scheduleFlush();
-    this.scheduleSoonSync();
+    if (this.suppressNotify === 0) {
+      this.emit();
+      this.scheduleSoonSync();
+    }
     return v;
+  }
+
+  /** Run puts so every write is queued before listeners or auto-sync can snapshot the outbox. */
+  private batchPuts<T>(fn: () => T): T {
+    this.suppressNotify++;
+    try {
+      return fn();
+    } finally {
+      this.suppressNotify--;
+      if (this.suppressNotify === 0) {
+        this.emit();
+        this.scheduleSoonSync();
+      }
+    }
   }
 
   private active(): BreastFeed | null {
@@ -631,18 +649,22 @@ export class FeedCore {
     const now = this.now();
     const startedAt = this.clampAt(input.startedAt, now);
     const putDownAt = input.putDownAt === undefined ? null : this.clampAt(input.putDownAt, now);
-    this.ensurePlanFor({ type: input.type, startedAt, putDownAt });
-    const e: SleepSession = {
-      ...this.base(now),
-      kind: 'sleep_session',
-      type: input.type,
-      startedAt,
-      putDownAt,
-      asleepAt: null,
-      endedAt: null,
-      events: [],
-    };
-    return this.put(e);
+    // Queue the default plan (first session) and the session together so a
+    // listener or auto-sync cannot snapshot the outbox with only the plan.
+    return this.batchPuts(() => {
+      this.ensurePlanFor({ type: input.type, startedAt, putDownAt });
+      const e: SleepSession = {
+        ...this.base(now),
+        kind: 'sleep_session',
+        type: input.type,
+        startedAt,
+        putDownAt,
+        asleepAt: null,
+        endedAt: null,
+        events: [],
+      };
+      return this.put(e);
+    });
   }
 
   async setPutDown(id: string, at?: number): Promise<SleepSession> {
@@ -884,7 +906,14 @@ export class FeedCore {
     if (!this.meta.householdId || !this.meta.secret || this.disposed) return;
     if (this.syncing) {
       this.syncAgain = true;
-      return this.syncing;
+      const inFlight = this.syncing;
+      // After the in-flight round, retry leftover outbox writes (e.g. a session
+      // queued after this request's snapshot was taken). Offline keeps them queued.
+      return inFlight.then(() => {
+        if (this.disposed || !this.meta.householdId || !this.meta.secret) return;
+        if (!this.hasSendableOutbox()) return;
+        return this.syncNow();
+      });
     }
     this.syncing = (async () => {
       try {
@@ -900,6 +929,11 @@ export class FeedCore {
       }
     })();
     return this.syncing;
+  }
+
+  private hasSendableOutbox(): boolean {
+    const hh = this.meta.householdId;
+    return !!hh && [...this.outbox].some((id) => this.entries.get(id)?.householdId === hh);
   }
 
   /** One request. true = call again (more pages / more outbox), false = done, null = failed. */
@@ -1002,8 +1036,7 @@ export class FeedCore {
     this.failures = 0;
     this.setSync('idle', error);
     await this.flush();
-    const sendable = [...this.outbox].some((id) => this.entries.get(id)?.householdId === hh);
-    return res.hasMore || sendable;
+    return res.hasMore || this.hasSendableOutbox();
   }
 
   // ── scheduling ──
