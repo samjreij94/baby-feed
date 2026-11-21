@@ -12,6 +12,7 @@ import {
   type SleepIntervalRow,
   type SleepSessionMetrics,
   type SleepSessionType,
+  NAP_CAP_MS,
   type SleepTimerState,
 } from '../core';
 import { useClock } from '../ui/adapter';
@@ -75,8 +76,8 @@ function TonightPanel() {
   const fail = (e: unknown) => console.warn('[sleep]', e);
   const id = session?.id;
   const go = (kind: SleepEventKind) => {
-    if (!id) return;
-    void sleep.addSleepEvent(id, kind).catch(fail);
+    if (!id) return Promise.resolve();
+    return sleep.addSleepEvent(id, kind).catch(fail);
   };
 
   const phase = timer?.phase ?? 'idle';
@@ -114,7 +115,7 @@ function TonightPanel() {
         <div className={`sleep-napcap${phase === 'nap_capped' ? ' is-due' : ''}`} role="status" data-testid="sleep-napcap">
           {phase === 'nap_capped' || (napCapRemaining ?? 1) <= 0
             ? 'Nap cap reached (60 min) — go get her.'
-            : `Nap cap in ${fmtCountdown(napCapRemaining!)}`}
+            : `Nap cap in ${fmtCountdown(napCapRemaining!, NAP_CAP_MS)}`}
         </div>
       )}
 
@@ -139,7 +140,7 @@ function TonightPanel() {
       {phase === 'crying' && timer && !due && (
         <section className="card sleep-timer" data-testid="sleep-countdown">
           <p className="eyebrow">Check #{timer.checkIndex} in</p>
-          <p className="sleep-count num" aria-live="polite">{fmtCountdown(timer.remainingMs)}</p>
+          <p className="sleep-count num" aria-live="polite">{fmtCountdown(timer.remainingMs, timer.intervalMs)}</p>
           <p className="dim small">Wait {Math.round(timer.intervalMs / 60_000)} min this interval</p>
         </section>
       )}
@@ -163,7 +164,7 @@ function TonightPanel() {
           <button
             type="button"
             className="btn btn-xl btn-primary sleep-hero-btn"
-            onClick={() => void sleep.startSleepSession({ type: 'night' }).then((s) => sleep.setPutDown(s.id)).catch(fail)}
+            onClick={() => sleep.startSleepSession({ type: 'night' }).then((s) => sleep.setPutDown(s.id)).catch(fail)}
           >
             <IconMoon /> Start bedtime / Put down
           </button>
@@ -172,14 +173,14 @@ function TonightPanel() {
           <button
             type="button"
             className="btn btn-xl btn-primary sleep-hero-btn"
-            onClick={() => void sleep.startSleepSession({ type: 'nap' }).then((s) => sleep.setPutDown(s.id)).catch(fail)}
+            onClick={() => sleep.startSleepSession({ type: 'nap' }).then((s) => sleep.setPutDown(s.id)).catch(fail)}
           >
             Start nap
           </button>
         )}
 
         {phase === 'pre_putdown' && id && (
-          <button type="button" className="btn btn-xl btn-primary sleep-hero-btn" onClick={() => void sleep.setPutDown(id).catch(fail)}>
+          <button type="button" className="btn btn-xl btn-primary sleep-hero-btn" onClick={() => sleep.setPutDown(id).catch(fail)}>
             <IconMoon /> Put down
           </button>
         )}
@@ -198,14 +199,14 @@ function TonightPanel() {
         {session && phase !== 'ended' && (
           <div className="sleep-grid">
             {phase !== 'asleep' && id && (
-              <button type="button" className="btn sleep-grid-btn" onClick={() => void sleep.markAsleep(id).catch(fail)}>Asleep</button>
+              <button type="button" className="btn sleep-grid-btn" onClick={() => sleep.markAsleep(id).catch(fail)}>Asleep</button>
             )}
             {mode === 'night' && (
               <button type="button" className="btn sleep-grid-btn" onClick={() => go('night_waking')}>Night waking</button>
             )}
             <button type="button" className="btn sleep-grid-btn" onClick={() => go('planned_night_feed')}>Planned feed</button>
             {id && (
-              <button type="button" className="btn sleep-grid-btn" onClick={() => void sleep.endSleepSession(id).catch(fail)}>
+              <button type="button" className="btn sleep-grid-btn" onClick={() => sleep.endSleepSession(id).catch(fail)}>
                 {mode === 'nap' ? 'End nap' : 'Morning (end)'}
               </button>
             )}

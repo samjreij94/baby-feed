@@ -5,10 +5,13 @@ import type { SleepSession } from '../../core';
 const T0 = new Date(2026, 10, 20, 20, 0, 0).getTime();
 
 describe('sleep display helpers', () => {
-  it('formats remaining time as m:ss with ceil seconds', () => {
+  it('formats remaining time as m:ss, flooring seconds and clamping to a cap', () => {
     expect(fmtCountdown(4 * 60_000 + 12_000)).toBe('4:12');
     expect(fmtCountdown(0)).toBe('0:00');
-    expect(fmtCountdown(250)).toBe('0:01');
+    expect(fmtCountdown(250)).toBe('0:00'); // floor, not ceil
+    expect(fmtCountdown(60 * 60_000 + 1, 60 * 60_000)).toBe('60:00');
+    expect(fmtCountdown(3 * 60_000 + 5_000, 3 * 60_000)).toBe('3:00');
+    expect(fmtCountdown(60 * 60_000 + 1)).toBe('60:00');
   });
 
   it('converts morning cutoff minutes to a time input and back', () => {

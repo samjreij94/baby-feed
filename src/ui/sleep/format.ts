@@ -6,9 +6,15 @@
  */
 import type { SleepEvent, SleepEventKind, SleepSession } from '../../core';
 
-/** Remaining wait as "4:12". Uses ceil so 0:00 means due. */
-export function fmtCountdown(ms: number): string {
-  const s = Math.max(0, Math.ceil(ms / 1000));
+/**
+ * Remaining wait as "4:12". Floors whole seconds and clamps to `capMs` (the
+ * check interval or nap cap) so a slightly stale clock can never show more
+ * than the plan allows (e.g. 60:01).
+ */
+export function fmtCountdown(ms: number, capMs?: number): string {
+  const cap = capMs != null && Number.isFinite(capMs) ? Math.max(0, capMs) : Infinity;
+  const x = Math.min(cap, Math.max(0, ms));
+  const s = Math.floor(x / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 

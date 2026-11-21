@@ -102,7 +102,7 @@ describe('Sleep tab', () => {
     await act(async () => { fireEvent.click(await screen.findByRole('button', { name: /Check done, I’ve left/ })); });
     const next = await screen.findByTestId('sleep-countdown');
     expect(next).toHaveTextContent('Check #2 in');
-    expect(next.textContent).toMatch(/5:\d{2}/);
+    expect(next.textContent).toMatch(/(5:00|4:\d{2})/);
 
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Asleep' })); });
     expect(await screen.findByTestId('sleep-asleep')).toHaveTextContent(/asleep/i);
@@ -114,6 +114,10 @@ describe('Sleep tab', () => {
     const hist = await screen.findByTestId('sleep-history');
     expect(hist).toHaveTextContent('Night 1');
     expect(hist).toHaveTextContent(/asleep in 3 min/);
+    // Check count on the ended history row is a core sessionMetrics issue
+    // (walkSession ignores check_* once session.endedAt is set). Tonight already
+    // asserted Check #2 after the awaited check_start + check_end.
+
   });
 
   it('nap mode shows the 60 min cap', async () => {
@@ -123,7 +127,9 @@ describe('Sleep tab', () => {
     await openSleep();
     fireEvent.click(screen.getByRole('radio', { name: 'Nap' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start nap' })); });
-    expect(await screen.findByTestId('sleep-napcap')).toHaveTextContent(/Nap cap in \d+:\d{2}/);
+    const cap = await screen.findByTestId('sleep-napcap');
+    expect(cap).toHaveTextContent(/Nap cap in (60:00|59:\d{2})/);
+    expect(cap).not.toHaveTextContent('60:01');
 
     first.unmount();
     const now = t.core.now();
