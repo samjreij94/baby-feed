@@ -14,6 +14,7 @@ import type {
   SleepPlanPatch,
   SleepSession,
   SleepSessionMetrics,
+  SleepSessionType,
   SleepTimerPhase,
   SleepTimerState,
   SleepTrend,
@@ -119,6 +120,15 @@ export function nightNumber(session: SleepSession, plan: SleepPlan): number {
   const days = calendarDays(plan.startDate, date);
   if (!Number.isFinite(days)) return 1;
   return Math.max(1, 1 + days);
+}
+
+/**
+ * Night number a session put down at `at` would get (no override): same date / wake-cutoff math as
+ * `nightNumber`. Used for the idle UI (no active session) so it follows the plan instead of showing Night 1.
+ */
+export function nightNumberAt(plan: SleepPlan, at: EpochMs, type: SleepSessionType = 'night'): number {
+  const probe = { type, startedAt: at, putDownAt: at } as SleepSession;
+  return nightNumber(probe, plan);
 }
 
 export function wakeCutoffAt(plan: SleepPlan, nightDate: string): EpochMs {

@@ -23,6 +23,7 @@ export {
   sessionNightDate,
   sessionAttributionDate,
   nightNumber,
+  nightNumberAt,
   wakeCutoffAt,
   isMorningWake,
   intervalForCheck,

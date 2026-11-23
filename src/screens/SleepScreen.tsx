@@ -17,6 +17,7 @@ import {
   type SleepSessionMetrics,
   type SleepSessionType,
   NAP_CAP_MS,
+  nightNumberAt,
   type SleepTimerState,
 } from '../core';
 import { useClock } from '../ui/adapter';
@@ -115,6 +116,7 @@ function TonightPanel() {
   const hh = useHousehold();
   const sleep = useActiveSleepSession();
   const { session, others, timer } = sleep;
+  const { plan } = useSleepPlan();
   const [prefer, setPrefer] = useState<SleepSessionType>('night');
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -175,7 +177,7 @@ function TonightPanel() {
 
   return (
     <div className="sleep-tonight" data-testid="sleep-tonight">
-      <p className="sleep-night-label" data-testid="sleep-night">{nightTitle(idle ? prefer : mode, timer, 1)}</p>
+      <p className="sleep-night-label" data-testid="sleep-night">{nightTitle(idle ? prefer : mode, timer, nightNumberAt(plan, now, idle ? prefer : mode))}</p>
       {remote && (
         <div className="banner sleep-remote" role="status" data-testid="sleep-remote">
           <span>{remote}</span>
@@ -364,7 +366,8 @@ function TonightPanel() {
 function PlanPanel() {
   const { plan, setPlan, resetIntervals, saved } = useSleepPlan();
   const { timer, session, setNightNumberOverride } = useActiveSleepSession();
-  const current = Math.min(timer?.nightNumber ?? 1, 7);
+  const now = useClock(60_000);
+  const current = Math.min(timer?.nightNumber ?? nightNumberAt(plan, now), 7);
   const fail = (e: unknown) => console.warn('[sleep]', e);
 
   const setRow = (night: number, patch: Partial<SleepIntervalRow>) => {

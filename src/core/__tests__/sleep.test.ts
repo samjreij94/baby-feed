@@ -11,6 +11,7 @@ import {
   mergeSleepEvents,
   mergeSleepSession,
   nightNumber,
+  nightNumberAt,
   sessionAttributionDate,
   sessionMetrics,
   sessionNightDate,
@@ -142,6 +143,20 @@ describe('night numbering', () => {
     expect(calendarDays('2026-10-31', '2026-11-01')).toBe(1);
     expect(calendarDays('2026-11-01', '2026-10-31')).toBe(-1);
     expect(calendarDays('2026-11-20', '2026-11-20')).toBe(0);
+  });
+
+  it('nightNumberAt follows the plan when no session is active (idle UI)', () => {
+    const p = plan('2026-11-20');
+    // Sun Nov 22 7:26 PM → Night 3, not the old hard-coded Night 1.
+    expect(nightNumberAt(p, new Date(2026, 10, 22, 19, 26).getTime())).toBe(3);
+    // Before the 6 AM cutoff still counts as the previous evening's night.
+    expect(nightNumberAt(p, new Date(2026, 10, 23, 5, 59).getTime())).toBe(3);
+    expect(nightNumberAt(p, new Date(2026, 10, 23, 6, 0).getTime())).toBe(4);
+    // Naps use the calendar day.
+    expect(nightNumberAt(p, new Date(2026, 10, 23, 5, 59).getTime(), 'nap')).toBe(4);
+    // Before the start date, or no start date → 1.
+    expect(nightNumberAt(p, new Date(2026, 10, 19, 20, 0).getTime())).toBe(1);
+    expect(nightNumberAt({ ...p, startDate: '' }, Date.now())).toBe(1);
   });
 });
 
